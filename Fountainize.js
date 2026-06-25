@@ -3,6 +3,7 @@ var body;
 var pArray;
 var charList = [];
 var version = 10;
+var screenplayFont = 'Courier Prime'; // default screenplay font
 
 var Style = function(iLeft, iRight, uCase, lAbove, bold){
   this.iLeft = iLeft;
@@ -139,14 +140,17 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
         el = stylize(el, scene);
       }
       // Tag the scene header as Heading 3 so it appears in the document outline /
-      // chapters sidebar. Capture the current look first and re-apply it after, so
-      // the Heading 3 named style doesn't change the scene's styling.
-      var sceneAttributes = el.getAttributes();
+      // chapters sidebar. setHeading applies the Heading 3 named style (its own
+      // font, size and colour), so force the screenplay look straight back with
+      // explicit run formatting, which overrides the named style. A getAttributes/
+      // setAttributes round-trip does NOT work here: the inherited font and the
+      // run-level bold come back null and get wiped.
       el.setHeading(DocumentApp.ParagraphHeading.HEADING3);
-      el.setAttributes(sceneAttributes);
-      // getAttributes/setAttributes drops run-level bold (it comes back null), so
-      // re-assert it the same way stylize does.
-      el.editAsText().setBold(true);
+      el.editAsText()
+        .setFontFamily(screenplayFont)
+        .setFontSize(12)
+        .setForegroundColor('#000000')
+        .setBold(true);
       pStyle = 'scene';
       continue;
     }
@@ -332,7 +336,7 @@ function docSetUp(){
   // Set font
   var style = {};
   
-  style[DocumentApp.Attribute.FONT_FAMILY] = 'Courier Prime';
+  style[DocumentApp.Attribute.FONT_FAMILY] = screenplayFont;
   style[DocumentApp.Attribute.FONT_SIZE] = 12;
   style[DocumentApp.Attribute.FOREGROUND_COLOR] = '#000000';
   body.setAttributes(style);
