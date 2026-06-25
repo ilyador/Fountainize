@@ -138,6 +138,12 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
         el.setText(sceneHeader);
         el = stylize(el, scene);
       }
+      // Tag the scene header as Heading 3 so it appears in the document outline /
+      // chapters sidebar. Capture the current look first and re-apply it after, so
+      // the Heading 3 named style doesn't change the scene's styling.
+      var sceneAttributes = el.getAttributes();
+      el.setHeading(DocumentApp.ParagraphHeading.HEADING3);
+      el.setAttributes(sceneAttributes);
       pStyle = 'scene';
       continue;
     }
