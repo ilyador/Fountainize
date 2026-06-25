@@ -4,17 +4,18 @@ var pArray;
 var charList = [];
 var version = 10;
 
-var Style = function(iLeft, iRight, uCase, lAbove){
+var Style = function(iLeft, iRight, uCase, lAbove, bold){
   this.iLeft = iLeft;
   this.iRight = iRight;
   this.uCase = uCase;
   this.lAbove = lAbove;
+  this.bold = bold || false;
 };
 
 // Format Names (left indent, right indent, uppercase, lines above)
 // https://screenwriting.io/what-is-standard-screenplay-format/
-var scene = new Style(0,0,true, 2);
-var sceneWithNumbers = new Style(-0.5,0,true, 2);
+var scene = new Style(0,0,true, 2, true);
+var sceneWithNumbers = new Style(-0.5,0,true, 2, true);
 var dialogue = new Style(1.0, 1.5, false, 0);
 var character = new Style(2.0, 0, true, 1);
 var action = new Style(0, 0, false, 1);
@@ -276,28 +277,34 @@ function stylize(el, style){
     var text = el.getText();
     el.setText(text.toUpperCase());
   }
-  
-  // Apply proper spacing between the element and the one above it
-  // Go up through elements until you hit a non-empty one. See if that was enough elements
+
+  // Bold if appropriate (e.g. scene headers). setText above clears run formatting,
+  // so this re-applies bold to the whole element.
+  if(style.bold){
+    el.editAsText().setBold(true);
+  }
+
+  // Normalize the blank lines above this element to EXACTLY style.lAbove.
+  // Remove any blank/whitespace paragraphs directly above (including stray
+  // whitespace-only separator lines), then insert the exact number we want.
+  // This prevents the doubled gaps caused by leftover whitespace separators.
   var numSpacesAbove = firstEl ? 0 : style.lAbove;
-  var j = -1;
-  for(var i = 1; i <= numSpacesAbove; i++){
-    if(elAbove(el, i).getText() !== ''){ // If we hit some text too early, add some elements.
-      for(j = 0; j < numSpacesAbove + 1 - i; j++){
-        body.insertParagraph(body.getChildIndex(el), '');
-      }
-      break;
+  while(body.getChildIndex(el) > 0){
+    var above = body.getChild(body.getChildIndex(el) - 1);
+    var aboveText = '';
+    try { aboveText = above.getText(); } catch(e){ break; } // not a paragraph - stop
+    var isBlank = (aboveText === '' || aboveText.trim() === '');
+    var hasPageBreak = above.findElement(DocumentApp.ElementType.PAGE_BREAK) !== null;
+    if(isBlank && !hasPageBreak){
+      body.removeChild(above);
+    } else {
+      break; // hit real content or a page break (e.g. title page)
     }
   }
-  
-  // If we haven't added lines, there might be too many lines
-  //  if(j === -1){
-  //    // Remove lines that are empty above the amount we want
-  //    while(elAbove(el, style.lAbove + 1).getText() == '' && elAbove(el, style.lAbove + 1).findElement(DocumentApp.ElementType.PAGE_BREAK) === -1){
-  //      body.removeChild(elAbove(el, style.lAbove + 1));
-  //    }
-  //  }
-  
+  for(var s = 0; s < numSpacesAbove; s++){
+    body.insertParagraph(body.getChildIndex(el), '');
+  }
+
   firstEl = false;
   return el;
 } // End of STYLIZE function
