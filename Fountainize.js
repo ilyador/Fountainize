@@ -15,8 +15,8 @@ var Style = function(iLeft, iRight, uCase, lAbove, bold){
 
 // Format Names (left indent, right indent, uppercase, lines above)
 // https://screenwriting.io/what-is-standard-screenplay-format/
-var scene = new Style(0,0,true, 2, true);
-var sceneWithNumbers = new Style(-0.5,0,true, 2, true);
+var scene = new Style(0,0,true, 1, true);
+var sceneWithNumbers = new Style(-0.5,0,true, 1, true);
 var dialogue = new Style(1.0, 1.5, false, 0);
 var character = new Style(2.0, 0, true, 1);
 var action = new Style(0, 0, false, 1);
