@@ -82,7 +82,6 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
   }
   
   var pStyle = ''; // Defining the style of the previous element
-  var blankBefore = true; // Was the current element preceded by a blank/whitespace line?
   firstEl = true;
   
   // If on free license, check if body is too long
@@ -105,19 +104,13 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     // Whitespace-only lines (e.g. a lone space) count as blank too, so they can't
     // be misread as a CHARACTER cue and drag the next paragraph into dialogue.
     if(!text || text.trim() === ''){
-      blankBefore = true;
       continue;
     }
 
     // Skip over it if it's centered
     if(el.getAlignment() === DocumentApp.HorizontalAlignment.CENTER){
-      blankBefore = true;
       continue;
     }
-
-    // Remember whether a blank separated this element from the previous one, then clear it
-    var hadBlank = blankBefore;
-    blankBefore = false;
 
     // Set the line spacing according to standards (have to do this per-paragraph for some reason)
     el.setLineSpacing(0.86);
@@ -221,10 +214,12 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     }
 
     // DIALOGUE
-    // 1. Previous element was a character cue or paranthetical OR
-    // 2. A continuation of the same speech (not separated by a blank line) OR
-    // 3. The indentation matches dialogue (for already-formatted text)
-    if(pStyle === 'character' || pStyle === 'paranthetical' || (pStyle === 'dialogue' && !hadBlank) || el.getIndentStart()/72 === dialogue.iLeft){
+    // The element directly follows a character cue or a paranthetical.
+    // We deliberately do NOT also key off indentation or adjacent blank lines:
+    // those are rewritten by the formatter itself, which would make a stale/wrong
+    // dialogue formatting "sticky" across re-runs. Keying only off the preceding
+    // element keeps re-formatting self-correcting and idempotent.
+    if(pStyle === 'character' || pStyle === 'paranthetical'){
       el = stylize(el, dialogue);
       pStyle = 'dialogue';
       continue;
