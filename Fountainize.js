@@ -149,8 +149,11 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     }
     
     // PARANTHETICAL
-    // 1. Starts with a bracket
-    if(text.substr(0,1) === '('){
+    // A line that is WHOLLY a paranthetical: starts with '(' and ends with ')'.
+    // An inline "(beat) some dialogue" line is intentionally NOT matched here - it
+    // falls through to DIALOGUE so the action line after it isn't pulled into dialogue.
+    var trimmedText = text.trim();
+    if(trimmedText.charAt(0) === '(' && trimmedText.charAt(trimmedText.length - 1) === ')'){
       el = stylize(el, paranthetical);
       pStyle = 'paranthetical';
       continue;
