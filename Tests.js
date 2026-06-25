@@ -1,0 +1,244 @@
+/*
+ * Fountainize test suite — runs in the REAL Apps Script environment.
+ *
+ * It creates a real Google Doc, runs the real convert() on Fountain-format input,
+ * reads back the ACTUAL rendered formatting (indent, bold, font, heading,
+ * alignment, text) and asserts it. No mocks / proxies.
+ *
+ * HOW TO RUN
+ *   1. Open the script editor, select `runFountainTests`, click Run.
+ *   2. Authorize the (documents) scope when prompted.
+ *   3. Read the PASS/FAIL report in the Execution log, and open the "Fountainize
+ *      Test Sample" doc it creates to eyeball the rendered result.
+ *
+ * Requires the broader `https://www.googleapis.com/auth/documents` scope (to
+ * create/read a scratch doc) — this is a dev/test tool, not used by the add-on.
+ */
+
+var PT = 72; // points per inch
+
+// ---- expected indents (inches -> points), per Style in Fountainize.js ----
+var IND = { scene: 0, action: 0, transition: 0, character: 2 * PT, dialogue: 1 * PT, paranthetical: 1.5 * PT };
+
+// Read the actual rendered properties of a paragraph and infer its element type.
+function readEl(p) {
+  var ind = p.getIndentStart();
+  ind = (ind === null || ind === undefined) ? 0 : ind;
+  var align = p.getAlignment();
+  var heading = p.getHeading();
+  var isH3 = heading === DocumentApp.ParagraphHeading.HEADING3;
+  var bold = null, font = null;
+  try { bold = p.editAsText().isBold(); font = p.editAsText().getFontFamily(); } catch (e) {}
+  var near = function (a, b) { return Math.abs(a - b) <= 3; };
+  var type;
+  if (isH3) type = 'scene';
+  else if (align === DocumentApp.HorizontalAlignment.RIGHT) type = 'transition';
+  else if (align === DocumentApp.HorizontalAlignment.CENTER) type = 'centered';
+  else if (near(ind, IND.character)) type = 'character';
+  else if (near(ind, IND.paranthetical)) type = 'paranthetical';
+  else if (near(ind, IND.dialogue)) type = 'dialogue';
+  else type = 'action';
+  return { text: p.getText(), type: type, indent: ind, bold: bold, font: font, isH3: isH3, align: align };
+}
+
+function isBlankPara(p) { var t = p.getText(); return !t || t.trim() === ''; }
+
+// Reset the scratch doc to a single clean (Normal) paragraph, then write the lines.
+function buildDoc(body, lines) {
+  body.clear();
+  var ps = body.getParagraphs();
+  var first = ps.length ? ps[0] : body.appendParagraph('');
+  first.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+  first.setIndentStart(0); first.setIndentFirstLine(0); first.setIndentEnd(0);
+  first.setAlignment(DocumentApp.HorizontalAlignment.LEFT);
+  first.editAsText().setBold(false);
+  if (!lines.length) { first.setText(''); return; }
+  first.setText(lines[0]);
+  for (var i = 1; i < lines.length; i++) body.appendParagraph(lines[i]);
+}
+
+// Run convert() on `lines` in the scratch doc; return {chars, els:[readEl for non-blank], all:[readEl for every para]}.
+function runOn(doc, lines, opts) {
+  opts = opts || {};
+  var body = doc.getBody();
+  buildDoc(body, lines);
+  activeDocOverride = doc;
+  var chars;
+  try {
+    chars = convert('whole', !!opts.sceneNumbers, opts.autoFonts !== false, true);
+  } finally {
+    activeDocOverride = null;
+  }
+  var paras = body.getParagraphs();
+  var els = [], all = [];
+  for (var i = 0; i < paras.length; i++) {
+    var r = readEl(paras[i]);
+    all.push(r);
+    if (!isBlankPara(paras[i])) els.push(r);
+  }
+  return { chars: chars, els: els, all: all };
+}
+
+function typesOf(els) { return els.map(function (e) { return e.type; }); }
+function arrEq(a, b) { return a.length === b.length && a.every(function (x, i) { return x === b[i]; }); }
+
+// ---------- implemented-feature tests ----------
+// Each: name, input lines, expected element types (non-blank), optional extra(els, res)->''|errorString
+var TESTS = [
+  { name: 'Scene heading INT.', input: ['INT. KITCHEN - DAY', 'Bob pours coffee.'], expect: ['scene', 'action'],
+    extra: function (e) { return (e[0].bold === true && e[0].isH3 && e[0].font === 'Courier Prime' && e[0].text === 'INT. KITCHEN - DAY') ? '' : 'scene not bold/H3/CourierPrime/uppercase: ' + JSON.stringify(e[0]); } },
+  { name: 'Scene heading EXT.', input: ['EXT. PARK - NIGHT', 'Leaves rustle.'], expect: ['scene', 'action'] },
+  { name: 'Combined scene heading EXT/INT. (prefix preserved)', input: ['EXT/INT. CAR - DAY', 'She drives fast.'], expect: ['scene', 'action'],
+    extra: function (e) { return e[0].text === 'EXT/INT. CAR - DAY' ? '' : 'prefix not preserved: ' + e[0].text; } },
+  { name: 'Action', input: ['The storm rolls in over the hills.'], expect: ['action'] },
+  { name: 'Character + Dialogue', input: ['JANE', 'I told you not to come.'], expect: ['character', 'dialogue'] },
+  { name: 'Parenthetical', input: ['JANE', '(whispering)', 'They can hear us.'], expect: ['character', 'paranthetical', 'dialogue'] },
+  { name: 'Transition (right-aligned)', input: ['He slams the door.', 'CUT TO:', 'INT. HALL - DAY'], expect: ['action', 'transition', 'scene'],
+    extra: function (e) { return e[1].align === DocumentApp.HorizontalAlignment.RIGHT ? '' : 'transition not right-aligned'; } },
+  { name: 'Centered text >..< (brackets stripped, centered)', input: ['>THE END<'], expect: ['centered'],
+    extra: function (e) { return (e[0].text === 'THE END' && e[0].align === DocumentApp.HorizontalAlignment.CENTER) ? '' : 'centered wrong: ' + JSON.stringify(e[0]); } },
+  { name: 'Character with extension (V.O.)', input: ['JANE (V.O.)', 'It was a dark night.'], expect: ['character', 'dialogue'] },
+  { name: 'Character cue with number/symbol', input: ['GUARD #1', 'Halt!'], expect: ['character', 'dialogue'] },
+  { name: 'Inline parenthetical dialogue does not swallow next action', input: ['JANE', '(beat) Fine.', 'She storms off.'], expect: ['character', 'dialogue', 'action'] },
+  { name: 'All-caps action line is not mistaken for a transition/cue context', input: ['EXT. ROOF - DAY', 'He looks down.', 'CUT TO:', 'EXT. STREET - DAY'], expect: ['scene', 'action', 'transition', 'scene'] },
+  { name: 'Character auto-detection populates the shortcut list', input: ['SAMANTHA', 'Hello.'], expect: ['character', 'dialogue'],
+    extra: function (e, res) { var names = (res.chars || []).map(function (c) { return c.name; }); return names.indexOf('SAMANTHA') > -1 ? '' : 'SAMANTHA not auto-detected: ' + JSON.stringify(res.chars); } },
+  { name: 'Scene numbers option prefixes the heading', input: ['INT. ROOM - DAY', 'Wait.'], opts: { sceneNumbers: true }, expect: ['scene', 'action'],
+    extra: function (e) { return (e[0].text.indexOf('1') === 0 && e[0].text.indexOf('INT. ROOM - DAY') > -1) ? '' : 'no scene number prefix: ' + e[0].text; } },
+];
+
+// ---------- spacing + idempotency (checked separately) ----------
+function checkSpacing(doc) {
+  var lines = ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.'];
+  var res = runOn(doc, lines);
+  // gaps between consecutive non-blank paragraphs
+  var gaps = [], run = 0, seen = false, prev;
+  res.all.forEach(function (p) {
+    var blank = !p.text || p.text.trim() === '';
+    if (blank) { run++; return; }
+    if (seen) gaps.push({ before: p.text.slice(0, 18), gap: run });
+    seen = true; run = 0;
+  });
+  // expect: 1 before action (after scene), 1 before character, 0 before dialogue, 1 before action
+  var want = [1, 1, 0, 1];
+  var got = gaps.map(function (g) { return g.gap; });
+  return { ok: arrEq(got, want), want: want, got: got, gaps: gaps };
+}
+
+function checkIdempotent(doc) {
+  var lines = ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.'];
+  var r1 = typesOf(runOn(doc, lines).els);
+  // Re-run convert on the already-formatted doc (do NOT rebuild it)
+  activeDocOverride = doc;
+  try { convert('whole', false, true, true); } finally { activeDocOverride = null; }
+  var paras = doc.getBody().getParagraphs(), r2 = [];
+  for (var i = 0; i < paras.length; i++) if (!isBlankPara(paras[i])) r2.push(readEl(paras[i]).type);
+  return { ok: arrEq(r1, r2), first: r1, second: r2 };
+}
+
+// ---------- Fountain features NOT implemented (flagged, not failed) ----------
+var UNIMPLEMENTED = [
+  { feature: 'Forced Scene Heading', markup: '.SNOWGLOBE', fountain: 'leading "." forces a scene heading' },
+  { feature: 'Forced Action', markup: '!CAPS THAT WOULD READ AS A CUE', fountain: 'leading "!" forces action' },
+  { feature: 'Forced Character', markup: '@McCLANE', fountain: 'leading "@" forces a character cue (even lowercase)' },
+  { feature: 'Forced Transition', markup: '> JARRING SMASH CUT', fountain: 'leading ">" (no closing "<") forces a transition' },
+  { feature: 'Dual Dialogue', markup: 'BRICK ^', fountain: 'trailing "^" makes side-by-side dialogue' },
+  { feature: 'Lyrics', markup: '~Willy Wonka! Willy Wonka!', fountain: 'leading "~" marks lyrics' },
+  { feature: 'Emphasis (bold/italic/underline)', markup: 'He was *very* **angry** and _tired_', fountain: '*italic* **bold** _underline_ ***bolditalic***' },
+  { feature: 'Page Break', markup: '===', fountain: 'three or more "=" forces a page break' },
+  { feature: 'Note', markup: '[[ remember the red herring ]]', fountain: '"[[ .. ]]" is an inline note (hidden in output)' },
+  { feature: 'Boneyard (comment)', markup: '/* this whole bit is cut */', fountain: '"/* .. */" is removed from the script' },
+  { feature: 'Section', markup: '# Act One', fountain: 'leading "#" is a structural section (outline only)' },
+  { feature: 'Synopsis', markup: '= Sara reaches the gate', fountain: 'leading "=" is a synopsis (outline only)' },
+  { feature: 'Title Page (markup)', markup: 'Title: Big Fish', fountain: '"Title:/Author:/.." key:value title page (Fountainize uses the sidebar form instead)' }
+];
+
+function runUnimplemented(doc) {
+  return UNIMPLEMENTED.map(function (u) {
+    var got = '(error)';
+    try {
+      var res = runOn(doc, [u.markup, 'A following line of normal text.']);
+      got = res.els.length ? res.els[0].type : '(none)';
+    } catch (err) { got = 'EXCEPTION: ' + err; }
+    return { feature: u.feature, markup: u.markup, fountain: u.fountain, got: got };
+  });
+}
+
+// ---------- runner ----------
+// Web-app entry point: triggers the suite via a plain HTTP GET (returns the text
+// report) once the script has been authorized. Used for automated test runs.
+function doGet(e) {
+  var out;
+  try { out = runFountainTests(); }
+  catch (err) { return ContentService.createTextOutput('RUN ERROR: ' + err).setMimeType(ContentService.MimeType.TEXT); }
+  return ContentService.createTextOutput(out.report + '\n\nsampleDoc: ' + out.sampleDocUrl).setMimeType(ContentService.MimeType.TEXT);
+}
+
+function runFountainTests() {
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  var doc = DocumentApp.create('Fountainize Test Sample ' + stamp);
+  var lines = [];
+  var pass = 0, fail = 0;
+
+  lines.push('FOUNTAINIZE TEST REPORT  —  ' + stamp);
+  lines.push('Verifies the rendered output of the real convert() on a real Google Doc.');
+  lines.push('');
+  lines.push('== IMPLEMENTED FEATURES ==');
+  TESTS.forEach(function (t) {
+    var got = [], ok = false, detail = '';
+    try {
+      var res = runOn(doc, t.input, t.opts);
+      got = typesOf(res.els);
+      ok = arrEq(got, t.expect);
+      if (ok && t.extra) { detail = t.extra(res.els, res); if (detail) ok = false; }
+    } catch (err) { ok = false; detail = 'EXCEPTION: ' + err; }
+    if (ok) pass++; else fail++;
+    lines.push((ok ? 'PASS  ' : 'FAIL  ') + t.name);
+    if (!ok) {
+      lines.push('        input:    ' + JSON.stringify(t.input));
+      lines.push('        expected: ' + JSON.stringify(t.expect));
+      lines.push('        got:      ' + JSON.stringify(got));
+      if (detail) lines.push('        check:    ' + detail);
+    }
+  });
+
+  try {
+    var sp = checkSpacing(doc);
+    (sp.ok ? pass++ : fail++);
+    lines.push((sp.ok ? 'PASS  ' : 'FAIL  ') + 'Spacing: 1 blank between blocks, 0 within  (want ' + JSON.stringify(sp.want) + ', got ' + JSON.stringify(sp.got) + ')');
+  } catch (err) { fail++; lines.push('FAIL  Spacing — EXCEPTION: ' + err); }
+
+  try {
+    var idem = checkIdempotent(doc);
+    (idem.ok ? pass++ : fail++);
+    lines.push((idem.ok ? 'PASS  ' : 'FAIL  ') + 'Idempotent: re-running gives the same result');
+    if (!idem.ok) { lines.push('        first:  ' + JSON.stringify(idem.first)); lines.push('        second: ' + JSON.stringify(idem.second)); }
+  } catch (err) { fail++; lines.push('FAIL  Idempotent — EXCEPTION: ' + err); }
+
+  lines.push('');
+  lines.push('== NOT IMPLEMENTED (Fountain spec) — flagged, showing what Fountainize currently does ==');
+  runUnimplemented(doc).forEach(function (u) {
+    lines.push('TODO  ' + u.feature + '  (' + u.markup + ')');
+    lines.push('        fountain: ' + u.fountain);
+    lines.push('        current:  Fountainize renders this line as "' + u.got + '"');
+  });
+
+  lines.push('');
+  lines.push('== SUMMARY ==  ' + pass + ' passed, ' + fail + ' failed, ' + UNIMPLEMENTED.length + ' Fountain features not implemented.');
+
+  var report = lines.join('\n');
+  Logger.log(report); // always available in the editor's Execution log
+
+  // Leave a rendered mini-screenplay in the doc so you can visually confirm it reads
+  // like a screenplay on the actual page.
+  try {
+    runOn(doc, [
+      'INT. NOMAD CAMP - DAWN', 'Sara wakes in a small tent and peeks outside.',
+      'ZE\'EV', '(quietly)', 'The road to the city is open.',
+      'She nods and reaches for her rifle.', 'CUT TO:', 'EXT. DESERT ROAD - DAY',
+      'The tribe walks along a ruined highway.', 'DOV', 'Something is not right.', '>THE END<'
+    ]);
+  } catch (e) {}
+
+  return { summary: pass + ' passed / ' + fail + ' failed', sampleDocUrl: doc.getUrl(), report: report };
+}

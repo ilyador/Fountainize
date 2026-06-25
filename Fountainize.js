@@ -4,6 +4,12 @@ var pArray;
 var charList = [];
 var version = 10;
 var screenplayFont = 'Courier Prime'; // default screenplay font
+var activeDocOverride = null; // tests can point convert()/docSetUp() at a specific document
+
+// Returns the document to operate on: a test override if set, else the active document.
+function getActiveDoc(){
+  return activeDocOverride ? activeDocOverride : DocumentApp.getActiveDocument();
+}
 
 var Style = function(iLeft, iRight, uCase, lAbove, bold){
   this.iLeft = iLeft;
@@ -45,7 +51,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
   const elementLimit = 800;
   var sceneNum = 1;
   
-  doc = DocumentApp.getActiveDocument();
+  doc = getActiveDoc();
   body = doc.getBody();
   type = type || 'whole';
   
@@ -320,7 +326,7 @@ function stylize(el, style){
 // Set Document margin and font settings 
 // https://screenwriting.io/what-is-standard-screenplay-format/
 function docSetUp(){
-  doc = DocumentApp.getActiveDocument();
+  doc = getActiveDoc();
   var body = doc.getBody();
   var footer = doc.getFooter();
   if(footer == undefined){
@@ -379,6 +385,7 @@ function elAbove(el, num){
 function setCharsToStorage(charList){
   try{
     const documentProperties = PropertiesService.getDocumentProperties();
+    if(!documentProperties){ return; } // no bound document (e.g. running tests)
     documentProperties.setProperty('chars', JSON.stringify(charList));
   } catch(e){
     DocumentApp.getUi().alert(
@@ -395,6 +402,7 @@ function getCharsFromStorage(){
   let chars = [];
   try{
     const documentProperties = PropertiesService.getDocumentProperties();
+    if(!documentProperties){ return []; } // no bound document (e.g. running tests)
     charStr = documentProperties.getProperty('chars');
     chars = JSON.parse(charStr);
     if(!chars){
