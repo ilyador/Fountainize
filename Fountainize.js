@@ -81,6 +81,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
   }
   
   var pStyle = ''; // Defining the style of the previous element
+  var blankBefore = true; // Was the current element preceded by a blank/whitespace line?
   firstEl = true;
   
   // If on free license, check if body is too long
@@ -99,42 +100,48 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     var el = pArray[i];
     var text = el.getText();
     
-    // Skip over it if it's an empty line OR not a paragraph element
-    if(!text){
-      continue; 
-    }
-    
-    // Skip over it if it's centered
-    if(el.getAlignment() === DocumentApp.HorizontalAlignment.CENTER){
+    // Skip over it if it's an empty line OR not a paragraph element.
+    // Whitespace-only lines (e.g. a lone space) count as blank too, so they can't
+    // be misread as a CHARACTER cue and drag the next paragraph into dialogue.
+    if(!text || text.trim() === ''){
+      blankBefore = true;
       continue;
     }
-    
+
+    // Skip over it if it's centered
+    if(el.getAlignment() === DocumentApp.HorizontalAlignment.CENTER){
+      blankBefore = true;
+      continue;
+    }
+
+    // Remember whether a blank separated this element from the previous one, then clear it
+    var hadBlank = blankBefore;
+    blankBefore = false;
+
     // Set the line spacing according to standards (have to do this per-paragraph for some reason)
     el.setLineSpacing(0.86);
     
     //prompt(text);
     
     // SCENE HEADER
+    // Starts with INT./EXT. (incl. combined forms like INT./EXT., EXT/INT., I/E.),
+    // optionally preceded by a scene number such as "12  INT. ROOM".
     var sceneText = text.toUpperCase();
     var sceneConditions = [
-      sceneText.substr(0,4) === 'INT.', // 1. Starts with 'int.' or 'ext.'
-      sceneText.substr(0,4) === 'EXT.',
-      !isNaN(parseInt(text.substr(0,1))) && (sceneText.indexOf('INT.') > -1 || sceneText.indexOf('EXT.') > -1)
+      /^(INT|EXT|EST|I\/E|E\/I)[\.\/]/.test(sceneText), // starts with int./ext. or a combined form
+      !isNaN(parseInt(text.substr(0,1))) && (sceneText.indexOf('INT.') > -1 || sceneText.indexOf('EXT.') > -1) // numbered
     ];
-    
-    var intPos = sceneText.indexOf('INT.') > -1 ? sceneText.indexOf('INT.') : 999999999;
-    var extPos = sceneText.indexOf('EXT.') > -1 ? sceneText.indexOf('EXT.') : 999999999;
-    var firstMatch = Math.min(intPos, extPos);
-    
+
     if(matches(sceneConditions)){
+      // Strip any existing leading scene number so it isn't duplicated, but keep the
+      // FULL int./ext. prefix (don't truncate combined forms like EXT/INT.).
+      var sceneHeader = sceneText.replace(/^\s*\d+[\.\):\t ]+/, '');
       if(sceneNumbers){
-        var newSceneHeader = sceneNum + "\t" + sceneText.substring(firstMatch);
-        el.setText(newSceneHeader);
+        el.setText(sceneNum + "\t" + sceneHeader);
         el = stylize(el, sceneWithNumbers);
         sceneNum = sceneNum + 1;
       } else {
-        var newSceneHeader = sceneText.substring(firstMatch);
-        el.setText(newSceneHeader);
+        el.setText(sceneHeader);
         el = stylize(el, scene);
       }
       pStyle = 'scene';
@@ -155,59 +162,50 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
       el.setText(text.substr(1, text.length - 2));
       el = stylize(el, centered);
       el.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-      pstyle = 'action';
+      pStyle = 'action';
       continue;
     }
     
-    // DIALOGUE
-    // 1. Previous style was character OR
-    // 2. Previous style was paranthetical OR
-    // 3. The indentation matches the expected indentation for dialogue (for previously processed dialogue)
-    if(pStyle === 'character' || pStyle === 'paranthetical' || el.getIndentStart()/72 === dialogue.iLeft){
-      el = stylize(el, dialogue);
-      pStyle = 'dialogue';
-      continue;
-    }
-    
-    // TRANSITION
-    // 1. Ends in " to:", " in:", or "out:"
-    var endString = text.substring(text.length - 5).toLowerCase()
+    // TRANSITION (checked before CHARACTER so "CUT TO:"/"FADE TO:" aren't read as names)
+    // 1. Ends in " to:", " in:", or "out:" (last 4 chars)
+    var endString = text.substring(text.length - 4).toLowerCase()
     if(endString === ' to:' || endString === ' in:' || endString === 'out:'){
       el = stylize(el, transition);
       el.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
       pStyle = 'transition';
       continue;
     }
-    
-    // CHARACTER
-    // 1. All uppercase and doesn't start with 'int.' or 'ext.'
-    // 2. Matches a shorthand character
-    // Works with any bracket text ex. (V.O.), (CONT'D)
-    
-    // Check if it matches a shorthand, if so replace the text
+
+    // CHARACTER (checked before DIALOGUE so a real cue is never swallowed as dialogue)
+    // A line is a character cue when it is all uppercase, does not end in punctuation,
+    // AND the next non-blank line is "speakable" (prose/paranthetical/shout) - so this
+    // all-caps line is a NAME rather than a sign, transition or stray caps.
+    // Also expands shorthand character names.
     var upperText = text.toUpperCase();
-    // Remove bracketed text first
+    // Remove bracketed text first (ex. (V.O.), (CONT'D))
     const firstBracket = upperText.indexOf("(");
     var charNoBrackets = upperText;
     var charBracketsOnly = "";
     if(firstBracket > -1){
       charNoBrackets = upperText.substring(0,firstBracket - 1);
       charBracketsOnly = upperText.substring(firstBracket - 1);
-      //      DocumentApp.getUi().alert(charNoBrackets + ", " + charBracketsOnly);
     }
-    
+
     for(var j = 0; j < charList.length; j++){
       if(charNoBrackets == charList[j].sh){
         const newText = charList[j].name + charBracketsOnly;
         el.setText(newText);
+        text = el.getText();
+        upperText = text.toUpperCase();
         break;
       }
     }
-    
-    // Is is in all uppercase?
+
+    // Is it all uppercase, and does spoken text follow it?
     if(upperText === text){
       const lastChar = upperText.slice(-1);
-      if(!(endPunctuationMeansNotChar && (lastChar === "." || lastChar === "!" || lastChar === "?" || lastChar === "-"))){
+      const endsInPunct = endPunctuationMeansNotChar && (lastChar === "." || lastChar === "!" || lastChar === "?" || lastChar === "-");
+      if(!endsInPunct && speakableFollows(i)){
         el = stylize(el, character);
         pStyle = 'character';
         if(charList.length < charLimit){
@@ -217,18 +215,47 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
         continue;
       }
     }
-    
-    
-    
+
+    // DIALOGUE
+    // 1. Previous element was a character cue or paranthetical OR
+    // 2. A continuation of the same speech (not separated by a blank line) OR
+    // 3. The indentation matches dialogue (for already-formatted text)
+    if(pStyle === 'character' || pStyle === 'paranthetical' || (pStyle === 'dialogue' && !hadBlank) || el.getIndentStart()/72 === dialogue.iLeft){
+      el = stylize(el, dialogue);
+      pStyle = 'dialogue';
+      continue;
+    }
+
     // ACTION
     // Basically anything else.
     el = stylize(el, action);
-    
+    pStyle = 'action';
+
   } // End of element looping
   
   setCharsToStorage(charList)
   return charList;
 } // End of convert function
+
+// Returns the text of the next non-blank element after index i in pArray (or '' if none).
+// Whitespace-only elements count as blank.
+function nextSpeakableText(i){
+  for(var k = i + 1; k < pArray.length; k++){
+    var t = '';
+    try { t = pArray[k].getText(); } catch(e){ t = ''; }
+    if(t && t.trim() !== ''){ return t; }
+  }
+  return '';
+}
+
+// True if the line after index i looks like spoken/acted prose (contains a lowercase
+// letter, is a paranthetical, or ends in !/?), meaning the all-uppercase line at i is
+// a character NAME rather than a sign, transition or heading.
+function speakableFollows(i){
+  var nxt = nextSpeakableText(i);
+  if(!nxt){ return false; }
+  return /[a-z]/.test(nxt) || nxt.charAt(0) === '(' || /[!?]$/.test(nxt.trim());
+}
 
 
 // STYLIZE
