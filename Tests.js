@@ -125,15 +125,25 @@ function checkSpacing(doc) {
   return { ok: arrEq(got, want), want: want, got: got, gaps: gaps };
 }
 
+// A full fingerprint of the document: one entry per paragraph (BLANKS INCLUDED)
+// with its type and text. A second formatting pass must not change this, so any
+// extra blank line, extra space, or doubled header makes it differ.
+function structure(doc) {
+  return doc.getBody().getParagraphs().map(function (p) {
+    var blank = isBlankPara(p);
+    return (blank ? 'blank' : readEl(p).type) + '|' + (blank ? '' : p.getText());
+  }).join('\n');
+}
+
 function checkIdempotent(doc) {
-  var lines = ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.'];
-  var r1 = typesOf(runOn(doc, lines).els);
-  // Re-run convert on the already-formatted doc (do NOT rebuild it)
+  var lines = ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.', 'CUT TO:', 'EXT. STREET - DAY', 'A car passes by.'];
+  runOn(doc, lines);
+  var s1 = structure(doc); // full document after the first format
+  // Re-run convert on the ALREADY-formatted doc (no rebuild) - it must be a no-op.
   activeDocOverride = doc;
   try { convert('whole', false, true, true); } finally { activeDocOverride = null; }
-  var paras = doc.getBody().getParagraphs(), r2 = [];
-  for (var i = 0; i < paras.length; i++) if (!isBlankPara(paras[i])) r2.push(readEl(paras[i]).type);
-  return { ok: arrEq(r1, r2), first: r1, second: r2 };
+  var s2 = structure(doc); // full document after the second format
+  return { ok: s1 === s2, first: s1, second: s2 };
 }
 
 // ---------- Fountain features NOT implemented (flagged, not failed) ----------

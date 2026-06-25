@@ -107,10 +107,17 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     var el = pArray[i];
     var text = el.getText();
     
-    // Skip over it if it's an empty line OR not a paragraph element.
-    // Whitespace-only lines (e.g. a lone space) count as blank too, so they can't
-    // be misread as a CHARACTER cue and drag the next paragraph into dialogue.
+    // Empty / whitespace-only line: remove it. Stripping EVERY pre-existing blank
+    // and then re-inserting exactly the wanted number below is what makes a second
+    // Format Script pass a no-op (instead of piling on more blank lines). It also
+    // stops a lone-space line from being misread as a CHARACTER cue. Page-break
+    // paragraphs (e.g. a title page) are preserved.
     if(!text || text.trim() === ''){
+      var hasPageBreak = false;
+      try { hasPageBreak = el.findElement(DocumentApp.ElementType.PAGE_BREAK) !== null; } catch(e){}
+      if(!hasPageBreak){
+        try { if(body.getNumChildren() > 1){ body.removeChild(el); } } catch(e){}
+      }
       continue;
     }
 
@@ -298,25 +305,15 @@ function stylize(el, style){
     el.editAsText().setBold(true);
   }
 
-  // Normalize the blank lines above this element to EXACTLY style.lAbove.
-  // Remove any blank/whitespace paragraphs directly above (including stray
-  // whitespace-only separator lines), then insert the exact number we want.
-  // This prevents the doubled gaps caused by leftover whitespace separators.
+  // Insert exactly style.lAbove blank lines above this element. The main loop has
+  // already removed EVERY pre-existing blank paragraph, so a re-run strips them all
+  // and re-inserts the same number - the document comes out identical, no doubling.
+  // Inserted blanks are kept plain so they don't pollute the outline / Heading 3.
   var numSpacesAbove = firstEl ? 0 : style.lAbove;
-  while(body.getChildIndex(el) > 0){
-    var above = body.getChild(body.getChildIndex(el) - 1);
-    var aboveText = '';
-    try { aboveText = above.getText(); } catch(e){ break; } // not a paragraph - stop
-    var isBlank = (aboveText === '' || aboveText.trim() === '');
-    var hasPageBreak = above.findElement(DocumentApp.ElementType.PAGE_BREAK) !== null;
-    if(isBlank && !hasPageBreak){
-      body.removeChild(above);
-    } else {
-      break; // hit real content or a page break (e.g. title page)
-    }
-  }
   for(var s = 0; s < numSpacesAbove; s++){
-    body.insertParagraph(body.getChildIndex(el), '');
+    var blank = body.insertParagraph(body.getChildIndex(el), '');
+    blank.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+    blank.setIndentStart(0); blank.setIndentFirstLine(0); blank.setIndentEnd(0);
   }
 
   firstEl = false;
