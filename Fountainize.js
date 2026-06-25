@@ -328,7 +328,7 @@ function docSetUp(){
   // Set font
   var style = {};
   
-  style[DocumentApp.Attribute.FONT_FAMILY] = 'Courier';
+  style[DocumentApp.Attribute.FONT_FAMILY] = 'Courier Prime';
   style[DocumentApp.Attribute.FONT_SIZE] = 12;
   style[DocumentApp.Attribute.FOREGROUND_COLOR] = '#000000';
   body.setAttributes(style);
