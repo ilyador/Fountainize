@@ -144,6 +144,9 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
       var sceneAttributes = el.getAttributes();
       el.setHeading(DocumentApp.ParagraphHeading.HEADING3);
       el.setAttributes(sceneAttributes);
+      // getAttributes/setAttributes drops run-level bold (it comes back null), so
+      // re-assert it the same way stylize does.
+      el.editAsText().setBold(true);
       pStyle = 'scene';
       continue;
     }
