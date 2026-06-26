@@ -36,25 +36,25 @@ function Style(o){
   a[DocumentApp.Attribute.INDENT_FIRST_LINE]    = o.iLeft * PT;
   a[DocumentApp.Attribute.INDENT_END]           = o.iRight * PT;
   a[DocumentApp.Attribute.LINE_SPACING]         = LINE_HEIGHT;
-  a[DocumentApp.Attribute.SPACING_BEFORE]       = 0;
-  a[DocumentApp.Attribute.SPACING_AFTER]        = o.spaceAfter;
+  a[DocumentApp.Attribute.SPACING_BEFORE]       = o.spaceBefore || 0;
+  a[DocumentApp.Attribute.SPACING_AFTER]        = o.spaceAfter || 0;
   a[DocumentApp.Attribute.HORIZONTAL_ALIGNMENT] = o.align || LEFT;
-  a[DocumentApp.Attribute.BOLD]                 = !!o.bold;
+  if(o.bold){ a[DocumentApp.Attribute.BOLD] = true; } // only force bold ON (scenes); never strip existing bold (e.g. episode titles)
   a[DocumentApp.Attribute.FONT_FAMILY]          = screenplayFont;
   a[DocumentApp.Attribute.FONT_SIZE]            = 12;
   a[DocumentApp.Attribute.FOREGROUND_COLOR]     = '#000000';
   this.attrs = a;
 }
 
-// indents in inches; spaceAfter in points (https://screenwriting.io/what-is-standard-screenplay-format/)
-var scene            = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
-var sceneWithNumbers = new Style({iLeft:-0.5, iRight:0,   uCase:true,  spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
-var action           = new Style({iLeft:0,    iRight:0,   uCase:false, spaceAfter:BASE_GAP});
-var character        = new Style({iLeft:2.0,  iRight:0,   uCase:true,  spaceAfter:BASE_GAP});
-var dialogue         = new Style({iLeft:1.0,  iRight:1.5, uCase:false, spaceAfter:BASE_GAP/2});
-var parenthetical    = new Style({iLeft:1.5,  iRight:1.9, uCase:false, spaceAfter:BASE_GAP/2});
-var transition       = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceAfter:BASE_GAP,   align:RIGHT});
-var centered         = new Style({iLeft:-0.5, iRight:0,   uCase:false, spaceAfter:BASE_GAP,   align:CENTER});
+// indents in inches; spaceBefore/spaceAfter in points (BASE_GAP=12, half=6).
+var scene            = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
+var sceneWithNumbers = new Style({iLeft:-0.5, iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
+var action           = new Style({iLeft:0,    iRight:0,   uCase:false, spaceBefore:BASE_GAP, spaceAfter:BASE_GAP});
+var character        = new Style({iLeft:2.0,  iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP/2});
+var dialogue         = new Style({iLeft:1.0,  iRight:1.5, uCase:false, spaceBefore:0,        spaceAfter:BASE_GAP/2});
+var parenthetical    = new Style({iLeft:1.5,  iRight:1.9, uCase:false, spaceBefore:0,        spaceAfter:0});
+var transition       = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   align:RIGHT});
+var centered         = new Style({iLeft:-0.5, iRight:0,   uCase:false, spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   align:CENTER});
 
 // Apply a style to one paragraph: uppercase (only if it changes), set the scene
 // heading (scenes), then ONE batched setAttributes carrying everything else.

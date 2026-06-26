@@ -50,7 +50,7 @@ That's it — no command line and no external tooling required.
 | Inline parenthetical `(beat) line` | styled as dialogue; the following action line is **not** swallowed |
 | Transition `… TO:` / `IN:` / `OUT:` | styled as a transition, right-aligned |
 | Centered text `>…<` | brackets stripped, centered |
-| Spacing | paragraph **space-after margins** (no blank lines): a full gap after blocks, a half gap after dialogue/parenthetical, zero blank paragraphs |
+| Spacing | paragraph **space-before / space-after margins** (no blank lines): scene/action/transition/centered 12pt both sides; character 12 before / 6 after; dialogue 0 / 6; parenthetical 0 / 0; zero blank paragraphs |
 | Idempotency | re-running Format Script produces the identical result (no extra lines/spaces/headers) |
 | Format selection / block | `formatSelection()` styles only the selected paragraphs (or the one under the cursor) and leaves the rest untouched |
 

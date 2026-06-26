@@ -24,6 +24,7 @@ var IND = { scene: 0, action: 0, transition: 0, character: 2 * PT, dialogue: 1 *
 function readEl(p) {
   var ind = p.getIndentStart(); ind = (ind == null) ? 0 : ind;
   var sa = p.getSpacingAfter(); sa = (sa == null) ? 0 : sa;
+  var sb = p.getSpacingBefore(); sb = (sb == null) ? 0 : sb;
   var align = p.getAlignment();
   var isH3 = p.getHeading() === DocumentApp.ParagraphHeading.HEADING3;
   var bold = null, font = null;
@@ -37,7 +38,7 @@ function readEl(p) {
   else if (near(ind, IND.parenthetical)) type = 'parenthetical';
   else if (near(ind, IND.dialogue)) type = 'dialogue';
   else type = 'action';
-  return { text: p.getText(), type: type, indent: ind, spaceAfter: sa, bold: bold, font: font, isH3: isH3, align: align };
+  return { text: p.getText(), type: type, indent: ind, spaceBefore: sb, spaceAfter: sa, bold: bold, font: font, isH3: isH3, align: align };
 }
 
 function isBlankPara(p) { var t = p.getText(); return !t || t.trim() === ''; }
@@ -107,23 +108,27 @@ var TESTS = [
 ];
 
 // ---------- spacing + idempotency + selection (checked separately) ----------
-// Spacing is paragraph "space after" MARGINS (points), not blank lines: a full gap
-// (BASE_GAP) after blocks, a half gap after dialogue/parenthetical, and zero blank paragraphs.
+// Spacing is paragraph "space before"/"space after" MARGINS (points), not blank lines.
+// Per type: scene/action/transition/centered 12 before+after; character 12 before, 6 after;
+// dialogue 0 before, 6 after; parenthetical 0/0. And zero blank paragraphs.
 function checkSpacing(doc) {
-  var res = runOn(doc, ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.']);
+  var res = runOn(doc, ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.']); // scene, action, character, dialogue, action
   var blanks = res.all.filter(function (p) { return !p.text || p.text.trim() === ''; }).length;
-  var got = res.els.map(function (e) { return e.spaceAfter; });
-  var want = [BASE_GAP, BASE_GAP, BASE_GAP, BASE_GAP / 2, BASE_GAP]; // scene, action, character, dialogue, action
-  return { ok: blanks === 0 && arrEq(got, want), blanks: blanks, want: want, got: got };
+  var before = res.els.map(function (e) { return e.spaceBefore; });
+  var after = res.els.map(function (e) { return e.spaceAfter; });
+  var wantBefore = [BASE_GAP, BASE_GAP, BASE_GAP, 0, BASE_GAP];
+  var wantAfter = [BASE_GAP, BASE_GAP, BASE_GAP / 2, BASE_GAP / 2, BASE_GAP];
+  return { ok: blanks === 0 && arrEq(before, wantBefore) && arrEq(after, wantAfter),
+           blanks: blanks, before: before, after: after, wantBefore: wantBefore, wantAfter: wantAfter };
 }
 
-// Full fingerprint: one entry per paragraph with type, space-after and text. A
+// Full fingerprint: one entry per paragraph with type, space before/after and text. A
 // second Format Script pass must not change this (no extra lines/spaces/headers).
 function structure(doc) {
   return doc.getBody().getParagraphs().map(function (p) {
     if (isBlankPara(p)) { return 'blank'; }
     var r = readEl(p);
-    return r.type + '|sa=' + r.spaceAfter + '|' + p.getText();
+    return r.type + '|sb=' + r.spaceBefore + '|sa=' + r.spaceAfter + '|' + p.getText();
   }).join('\n');
 }
 
@@ -156,6 +161,18 @@ function checkSelection(doc) {
   var ok = jane && jane.type === 'character' && dlg && dlg.type === 'dialogue'
         && below && below.spaceAfter === 0; // out-of-selection paragraph left untouched (no margin applied)
   return { ok: !!ok, jane: jane && jane.type, dlg: dlg && dlg.type, belowSpaceAfter: below && below.spaceAfter };
+}
+
+// Formatting must not strip a user's manual bold from non-scene lines (e.g. episode titles).
+function checkBoldPreserved(doc) {
+  var body = doc.getBody();
+  buildDoc(body, ['INT. ROOM - DAY', 'This action line is bold.']);
+  body.getParagraphs()[1].editAsText().setBold(true); // user-bolded action line
+  activeDocOverride = doc;
+  try { convert('whole', false, false, true); } finally { activeDocOverride = null; }
+  var line = body.getParagraphs()[1];
+  var bold = line.editAsText().isBold();
+  return { ok: bold === true, bold: bold };
 }
 
 // ---------- Fountain features NOT implemented (flagged, not failed) ----------
@@ -227,7 +244,7 @@ function runFountainTests() {
   try {
     var sp = checkSpacing(doc);
     (sp.ok ? pass++ : fail++);
-    lines.push((sp.ok ? 'PASS  ' : 'FAIL  ') + 'Spacing: space-after margins, no blank lines  (want ' + JSON.stringify(sp.want) + ', got ' + JSON.stringify(sp.got) + ', blanks ' + sp.blanks + ')');
+    lines.push((sp.ok ? 'PASS  ' : 'FAIL  ') + 'Spacing: before/after margins, no blank lines  (before ' + JSON.stringify(sp.before) + ' want ' + JSON.stringify(sp.wantBefore) + '; after ' + JSON.stringify(sp.after) + ' want ' + JSON.stringify(sp.wantAfter) + '; blanks ' + sp.blanks + ')');
   } catch (err) { fail++; lines.push('FAIL  Spacing — EXCEPTION: ' + err); }
 
   try {
@@ -242,6 +259,12 @@ function runFountainTests() {
     (sel.ok ? pass++ : fail++);
     lines.push((sel.ok ? 'PASS  ' : 'FAIL  ') + 'Format selection: styles only the selection  (jane=' + sel.jane + ', dlg=' + sel.dlg + ', belowSpaceAfter=' + sel.belowSpaceAfter + ')');
   } catch (err) { fail++; lines.push('FAIL  Format selection — EXCEPTION: ' + err); }
+
+  try {
+    var bp = checkBoldPreserved(doc);
+    (bp.ok ? pass++ : fail++);
+    lines.push((bp.ok ? 'PASS  ' : 'FAIL  ') + 'Bold preserved: manual bold on non-scene lines is kept  (bold=' + bp.bold + ')');
+  } catch (err) { fail++; lines.push('FAIL  Bold preserved — EXCEPTION: ' + err); }
 
   lines.push('');
   lines.push('== NOT IMPLEMENTED (Fountain spec) — flagged, showing what Fountainize currently does ==');
