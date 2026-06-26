@@ -5,6 +5,7 @@ function onOpen(e){
     DocumentApp.getUi().createAddonMenu()
       .addItem('Show sidebar', 'showSidebar')
       .addItem('Format Script', 'convert')
+      .addItem('Format This Block', 'formatBlockFromMenu')
       .addToUi();
   } catch(err){
     DocumentApp.getUi().alert("Issue creating menu",

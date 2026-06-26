@@ -47,8 +47,8 @@ function Style(o){
 }
 
 // indents in inches; spaceBefore/spaceAfter in points (BASE_GAP=12, half=6).
-var scene            = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
-var sceneWithNumbers = new Style({iLeft:-0.5, iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
+var scene            = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceBefore:BASE_GAP*2, spaceAfter:BASE_GAP, bold:true, heading:HEADING3});
+var sceneWithNumbers = new Style({iLeft:-0.5, iRight:0,   uCase:true,  spaceBefore:BASE_GAP*2, spaceAfter:BASE_GAP, bold:true, heading:HEADING3});
 var action           = new Style({iLeft:0,    iRight:0,   uCase:false, spaceBefore:BASE_GAP, spaceAfter:BASE_GAP});
 var character        = new Style({iLeft:2.0,  iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP/2});
 var dialogue         = new Style({iLeft:1.0,  iRight:1.5, uCase:false, spaceBefore:0,        spaceAfter:BASE_GAP/2});
@@ -178,6 +178,13 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
 // Format just the selection / the paragraph under the cursor — fast, incremental.
 function formatSelection(sceneNumbers, autoFontsMargins, endPunctuationMeansNotChar){
   return convert('selection', sceneNumbers, autoFontsMargins, endPunctuationMeansNotChar);
+}
+
+// Menu entry point (Extensions → Fountainize → Format This Block): formats the current
+// block using the saved scene-number setting; skips doc-wide font/margin setup.
+function formatBlockFromMenu(){
+  var s = getSettings();
+  return formatSelection(!!s.sceneNumbers, false, true);
 }
 
 // Returns the paragraphs to format. For 'selection', seeds context with the line above.

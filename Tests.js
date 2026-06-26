@@ -116,7 +116,7 @@ function checkSpacing(doc) {
   var blanks = res.all.filter(function (p) { return !p.text || p.text.trim() === ''; }).length;
   var before = res.els.map(function (e) { return e.spaceBefore; });
   var after = res.els.map(function (e) { return e.spaceAfter; });
-  var wantBefore = [BASE_GAP, BASE_GAP, BASE_GAP, 0, BASE_GAP];
+  var wantBefore = [BASE_GAP * 2, BASE_GAP, BASE_GAP, 0, BASE_GAP]; // scene gets a double gap above
   var wantAfter = [BASE_GAP, BASE_GAP, BASE_GAP / 2, BASE_GAP / 2, BASE_GAP];
   return { ok: blanks === 0 && arrEq(before, wantBefore) && arrEq(after, wantAfter),
            blanks: blanks, before: before, after: after, wantBefore: wantBefore, wantAfter: wantAfter };

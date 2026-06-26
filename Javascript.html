@@ -58,16 +58,7 @@
     }).getCharsFromDOM(charListFromGrid());
   });
 
-  // ---- format just the current block / selection (fast, incremental) ----
-  on('format-block', 'click', function(){
-    var btn = $('format-block'), o = options();
-    setBusy(btn, true, 'Format This Block');
-    run.withSuccessHandler(function(){
-      run.withSuccessHandler(function(chars){ setBusy(btn, false, 'Format This Block'); fillCharGrid(chars); })
-         .withFailureHandler(function(){ setBusy(btn, false, 'Format This Block'); })
-         .formatSelection(o.sceneNumbers, o.autoFonts, o.endPunct);
-    }).getCharsFromDOM(charListFromGrid());
-  });
+  // "Format This Block" lives in the Extensions → Fountainize menu (formatBlockFromMenu).
 
   // Repopulate the character-shortcut grid from the server's char list.
   function fillCharGrid(chars){
