@@ -26,6 +26,8 @@ function getActiveDoc(){
 var LEFT   = DocumentApp.HorizontalAlignment.LEFT;
 var RIGHT  = DocumentApp.HorizontalAlignment.RIGHT;
 var CENTER = DocumentApp.HorizontalAlignment.CENTER;
+var HEADING1 = DocumentApp.ParagraphHeading.HEADING1;
+var HEADING2 = DocumentApp.ParagraphHeading.HEADING2;
 var HEADING3 = DocumentApp.ParagraphHeading.HEADING3;
 
 function Style(o){
@@ -55,6 +57,14 @@ var dialogue         = new Style({iLeft:1.0,  iRight:1.5, uCase:false, spaceBefo
 var parenthetical    = new Style({iLeft:1.5,  iRight:1.9, uCase:false, spaceBefore:0,        spaceAfter:0});
 var transition       = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   align:RIGHT});
 var centered         = new Style({iLeft:-0.5, iRight:0,   uCase:false, spaceBefore:BASE_GAP, spaceAfter:BASE_GAP,   align:CENTER});
+
+// Episode titles (a heading the user set themselves, H1/H2): keep the heading and its
+// font/size/alignment, but make it bold with a big top gap. Only these two attributes
+// are touched so the user's heading styling is preserved.
+var episodeAttrs = {};
+episodeAttrs[DocumentApp.Attribute.BOLD] = true;
+episodeAttrs[DocumentApp.Attribute.SPACING_BEFORE] = BASE_GAP * 2;
+episodeAttrs[DocumentApp.Attribute.SPACING_AFTER] = BASE_GAP;
 
 // Apply a style to one paragraph: uppercase (only if it changes), set the scene
 // heading (scenes), then ONE batched setAttributes carrying everything else.
@@ -99,6 +109,15 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
 
     // Blank / whitespace-only line: remove it (gaps are margins now). Page breaks kept.
     if(!text || text.trim() === ''){ removeIfBlank(el); continue; }
+
+    // EPISODE TITLE — a heading the user set (H1/H2, e.g. an episode title). Keep the
+    // heading + its font/alignment; just make it bold with a big top gap.
+    var hd = el.getHeading();
+    if(hd === HEADING1 || hd === HEADING2){
+      el.setAttributes(episodeAttrs);
+      pStyle = 'action';
+      continue;
+    }
 
     // Leave manually-centered paragraphs alone (e.g. a title the user centered).
     if(el.getAlignment() === CENTER){ continue; }

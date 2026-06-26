@@ -175,6 +175,20 @@ function checkBoldPreserved(doc) {
   return { ok: bold === true, bold: bold };
 }
 
+// A user-set heading (episode title, H2) is kept as H2, made bold, with a 24pt top gap.
+function checkEpisodeTitle(doc) {
+  var body = doc.getBody();
+  buildDoc(body, ['Episode One', 'INT. ROOM - DAY', 'She enters.']);
+  body.getParagraphs()[0].setHeading(DocumentApp.ParagraphHeading.HEADING2); // user marks it H2
+  activeDocOverride = doc;
+  try { convert('whole', false, false, true); } finally { activeDocOverride = null; }
+  var t = body.getParagraphs()[0];
+  var bold = t.editAsText().isBold();
+  var sb = t.getSpacingBefore();
+  var stillH2 = t.getHeading() === DocumentApp.ParagraphHeading.HEADING2;
+  return { ok: bold === true && sb === BASE_GAP * 2 && stillH2, bold: bold, spaceBefore: sb, h2: stillH2 };
+}
+
 // ---------- Fountain features NOT implemented (flagged, not failed) ----------
 var UNIMPLEMENTED = [
   { feature: 'Forced Scene Heading', markup: '.SNOWGLOBE', fountain: 'leading "." forces a scene heading' },
@@ -265,6 +279,12 @@ function runFountainTests() {
     (bp.ok ? pass++ : fail++);
     lines.push((bp.ok ? 'PASS  ' : 'FAIL  ') + 'Bold preserved: manual bold on non-scene lines is kept  (bold=' + bp.bold + ')');
   } catch (err) { fail++; lines.push('FAIL  Bold preserved — EXCEPTION: ' + err); }
+
+  try {
+    var et = checkEpisodeTitle(doc);
+    (et.ok ? pass++ : fail++);
+    lines.push((et.ok ? 'PASS  ' : 'FAIL  ') + 'Episode title (H2): kept as H2, bold, 24pt top gap  (bold=' + et.bold + ', spaceBefore=' + et.spaceBefore + ', h2=' + et.h2 + ')');
+  } catch (err) { fail++; lines.push('FAIL  Episode title — EXCEPTION: ' + err); }
 
   lines.push('');
   lines.push('== NOT IMPLEMENTED (Fountain spec) — flagged, showing what Fountainize currently does ==');

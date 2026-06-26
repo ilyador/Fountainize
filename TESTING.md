@@ -53,6 +53,8 @@ That's it — no command line and no external tooling required.
 | Spacing | paragraph **space-before / space-after margins** (no blank lines): scene 24 before / 12 after; action/transition/centered 12 both sides; character 12 before / 6 after; dialogue 0 / 6; parenthetical 0 / 0; zero blank paragraphs |
 | Idempotency | re-running Format Script produces the identical result (no extra lines/spaces/headers) |
 | Format selection / block | `formatSelection()` styles only the selected paragraphs (or the one under the cursor) and leaves the rest untouched |
+| Bold preserved | a user's manual bold on a non-scene line is not stripped by formatting |
+| Episode title (H1/H2) | a user-set heading is kept (stays in the outline), made bold, given a 24pt top gap, with its font/alignment left alone |
 
 ### Not implemented yet (flagged by the suite, with current behavior shown)
 
