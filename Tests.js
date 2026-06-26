@@ -189,6 +189,34 @@ function checkEpisodeTitle(doc) {
   return { ok: bold === true && sb === BASE_GAP * 2 && stillH2, bold: bold, spaceBefore: sb, h2: stillH2 };
 }
 
+// Boneyard /* ... */ blocks are coloured blue but keep their position-based formatting,
+// while text outside stays black. And re-running keeps the colours stable (idempotent).
+function checkBoneyard(doc) {
+  var body = doc.getBody();
+  buildDoc(body, ['Action before.', '/*', 'INT. CUT SCENE - DAY', 'Commented action.', '*/', 'Action after.']);
+  var BLUE = '#1155cc', BLACK = '#000000';
+  var colorOf = function (prefix) {
+    var ps = body.getParagraphs();
+    for (var i = 0; i < ps.length; i++) {
+      if (ps[i].getText().indexOf(prefix) === 0) { try { return ps[i].editAsText().getForegroundColor(); } catch (e) { return null; } }
+    }
+    return null;
+  };
+  var typeOf = function (prefix) {
+    var ps = body.getParagraphs();
+    for (var i = 0; i < ps.length; i++) { if (ps[i].getText().indexOf(prefix) === 0) { return readEl(ps[i]).type; } }
+    return null;
+  };
+  var run = function () { activeDocOverride = doc; try { convert('whole', false, false, true); } finally { activeDocOverride = null; } };
+  run();
+  var blueInside = colorOf('/*') === BLUE && colorOf('INT. CUT SCENE') === BLUE && colorOf('Commented') === BLUE && colorOf('*/') === BLUE;
+  var blackOutside = colorOf('Action before') === BLACK && colorOf('Action after') === BLACK;
+  var sceneKept = typeOf('INT. CUT SCENE') === 'scene'; // formatting unchanged by position
+  run(); // re-run must keep colours stable
+  var stable = colorOf('INT. CUT SCENE') === BLUE && colorOf('Action after') === BLACK;
+  return { ok: blueInside && blackOutside && sceneKept && stable, blueInside: blueInside, blackOutside: blackOutside, sceneKept: sceneKept, stable: stable };
+}
+
 // ---------- Fountain features NOT implemented (flagged, not failed) ----------
 var UNIMPLEMENTED = [
   { feature: 'Forced Scene Heading', markup: '.SNOWGLOBE', fountain: 'leading "." forces a scene heading' },
@@ -200,7 +228,7 @@ var UNIMPLEMENTED = [
   { feature: 'Emphasis (bold/italic/underline)', markup: 'He was *very* **angry** and _tired_', fountain: '*italic* **bold** _underline_ ***bolditalic***' },
   { feature: 'Page Break', markup: '===', fountain: 'three or more "=" forces a page break' },
   { feature: 'Note', markup: '[[ remember the red herring ]]', fountain: '"[[ .. ]]" is an inline note (hidden in output)' },
-  { feature: 'Boneyard (comment)', markup: '/* this whole bit is cut */', fountain: '"/* .. */" is removed from the script' },
+  { feature: 'Boneyard (comment)', markup: '/* this whole bit is cut */', fountain: '"/* .. */" is normally removed from the script; Fountainize instead keeps it and colours the block blue (see the Boneyard test)' },
   { feature: 'Section', markup: '# Act One', fountain: 'leading "#" is a structural section (outline only)' },
   { feature: 'Synopsis', markup: '= Sara reaches the gate', fountain: 'leading "=" is a synopsis (outline only)' },
   { feature: 'Title Page (markup)', markup: 'Title: Big Fish', fountain: '"Title:/Author:/.." key:value title page (Fountainize uses the sidebar form instead)' }
@@ -285,6 +313,12 @@ function runFountainTests() {
     (et.ok ? pass++ : fail++);
     lines.push((et.ok ? 'PASS  ' : 'FAIL  ') + 'Episode title (H2): kept as H2, bold, 24pt top gap  (bold=' + et.bold + ', spaceBefore=' + et.spaceBefore + ', h2=' + et.h2 + ')');
   } catch (err) { fail++; lines.push('FAIL  Episode title — EXCEPTION: ' + err); }
+
+  try {
+    var by = checkBoneyard(doc);
+    (by.ok ? pass++ : fail++);
+    lines.push((by.ok ? 'PASS  ' : 'FAIL  ') + 'Boneyard /* */: block coloured blue, formatting kept, idempotent  (blueInside=' + by.blueInside + ', blackOutside=' + by.blackOutside + ', sceneKept=' + by.sceneKept + ', stable=' + by.stable + ')');
+  } catch (err) { fail++; lines.push('FAIL  Boneyard — EXCEPTION: ' + err); }
 
   lines.push('');
   lines.push('== NOT IMPLEMENTED (Fountain spec) — flagged, showing what Fountainize currently does ==');

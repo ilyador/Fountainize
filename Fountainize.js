@@ -15,6 +15,7 @@ var PT = 72;                      // points per inch
 var BASE_GAP = 12;                // points of "space after" a block — the one spacing knob
 var LINE_HEIGHT = 0.86;           // line spacing
 var screenplayFont = 'Courier Prime';
+var BONEYARD_COLOR = '#1155cc';   // blue used to mark /* ... */ boneyard comment blocks
 
 var activeDocOverride = null;     // tests can point convert()/docSetUp() at a document
 function getActiveDoc(){
@@ -66,15 +67,17 @@ episodeAttrs[DocumentApp.Attribute.BOLD] = true;
 episodeAttrs[DocumentApp.Attribute.SPACING_BEFORE] = BASE_GAP * 2;
 episodeAttrs[DocumentApp.Attribute.SPACING_AFTER] = BASE_GAP;
 
-// Apply a style to one paragraph: uppercase (only if it changes), set the scene
-// heading (scenes), then ONE batched setAttributes carrying everything else.
-function apply(el, style){
+// Apply a style to one paragraph: uppercase (only if it changes), set the scene heading
+// (scenes), then ONE batched setAttributes. `color` overrides the text colour (used to
+// paint boneyard comment blocks blue); when omitted the style's black is kept.
+function apply(el, style, color){
   if(style.uCase){
     var t = el.getText(), up = t.toUpperCase();
     if(up !== t){ el.setText(up); }
   }
   if(style.heading){ el.setHeading(style.heading); } // before setAttributes so our attrs win over the named style
   el.setAttributes(style.attrs);
+  if(color){ el.editAsText().setForegroundColor(color); }
 }
 
 // ---- Main: classify every paragraph, then apply ----------------------------
@@ -103,6 +106,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
   }
 
   var pStyle = '';
+  var inBoneyard = false; // currently inside a /* ... */ boneyard comment block
   for(var i = 0; i < pArray.length; i++){
     var el = pArray[i];
     var text = el.getText();
@@ -110,17 +114,28 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     // Blank / whitespace-only line: remove it (gaps are margins now). Page breaks kept.
     if(!text || text.trim() === ''){ removeIfBlank(el); continue; }
 
+    // BONEYARD — a /* ... */ comment block. Paint it blue but leave its formatting to its
+    // position (don't reclassify), so commented-out script stays readable where it sits.
+    var opens = text.indexOf('/*') > -1, closes = text.indexOf('*/') > -1;
+    var byColor = (inBoneyard || opens) ? BONEYARD_COLOR : null;
+    if(inBoneyard){ if(closes){ inBoneyard = false; } }
+    else if(opens && !closes){ inBoneyard = true; }
+
     // EPISODE TITLE — a heading the user set (H1/H2, e.g. an episode title). Keep the
     // heading + its font/alignment; just make it bold with a big top gap.
     var hd = el.getHeading();
     if(hd === HEADING1 || hd === HEADING2){
       el.setAttributes(episodeAttrs);
+      if(byColor){ el.editAsText().setForegroundColor(byColor); }
       pStyle = 'action';
       continue;
     }
 
     // Leave manually-centered paragraphs alone (e.g. a title the user centered).
-    if(el.getAlignment() === CENTER){ continue; }
+    if(el.getAlignment() === CENTER){
+      if(byColor){ el.editAsText().setForegroundColor(byColor); }
+      continue;
+    }
 
     var upper = text.toUpperCase();
 
@@ -130,7 +145,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
       var header = upper.replace(/^\s*\d+[\.\):\t ]+/, '');                 // strip old number, keep full prefix
       var headerText = sceneNumbers ? (sceneNum++ + '\t' + header) : header;
       if(headerText !== text){ el.setText(headerText); }
-      apply(el, sceneNumbers ? sceneWithNumbers : scene);
+      apply(el, sceneNumbers ? sceneWithNumbers : scene, byColor);
       pStyle = 'scene';
       continue;
     }
@@ -138,7 +153,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     // PARENTHETICAL — a line that is WHOLLY "(...)". Inline "(beat) line" is left for DIALOGUE.
     var trimmed = text.trim();
     if(trimmed.charAt(0) === '(' && trimmed.charAt(trimmed.length - 1) === ')'){
-      apply(el, parenthetical);
+      apply(el, parenthetical, byColor);
       pStyle = 'parenthetical';
       continue;
     }
@@ -146,7 +161,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     // CENTERED — ">text<"
     if(text.charAt(0) === '>' && text.charAt(text.length - 1) === '<'){
       el.setText(text.substring(1, text.length - 1));
-      apply(el, centered);
+      apply(el, centered, byColor);
       pStyle = 'action';
       continue;
     }
@@ -154,7 +169,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     // TRANSITION — ends in " to:", " in:", "out:" (before CHARACTER so "CUT TO:" isn't a name).
     var tail = text.substring(text.length - 4).toLowerCase();
     if(tail === ' to:' || tail === ' in:' || tail === 'out:'){
-      apply(el, transition);
+      apply(el, transition, byColor);
       pStyle = 'transition';
       continue;
     }
@@ -170,7 +185,7 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
       var last = upper.slice(-1);
       var endsPunct = endPunctuationMeansNotChar && (last === '.' || last === '!' || last === '?' || last === '-');
       if(!endsPunct && speakableFollows(i)){
-        apply(el, character);
+        apply(el, character, byColor);
         pStyle = 'character';
         if(charList.length < charLimit){ addToCharList(nameOnly); }
         continue;
@@ -180,13 +195,13 @@ function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotCha
     // DIALOGUE — directly follows a cue or a parenthetical (keyed only off the prior
     // element, so re-formatting is self-correcting and idempotent).
     if(pStyle === 'character' || pStyle === 'parenthetical'){
-      apply(el, dialogue);
+      apply(el, dialogue, byColor);
       pStyle = 'dialogue';
       continue;
     }
 
     // ACTION — everything else.
-    apply(el, action);
+    apply(el, action, byColor);
     pStyle = 'action';
   }
 

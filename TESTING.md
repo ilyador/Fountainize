@@ -55,6 +55,7 @@ That's it — no command line and no external tooling required.
 | Format selection / block | `formatSelection()` styles only the selected paragraphs (or the one under the cursor) and leaves the rest untouched |
 | Bold preserved | a user's manual bold on a non-scene line is not stripped by formatting |
 | Episode title (H1/H2) | a user-set heading is kept (stays in the outline), made bold, given a 24pt top gap, with its font/alignment left alone |
+| Boneyard `/* … */` | the comment block is coloured blue but keeps its position-based formatting (not reclassified); text outside stays black; idempotent |
 
 ### Not implemented yet (flagged by the suite, with current behavior shown)
 
