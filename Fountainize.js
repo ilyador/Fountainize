@@ -1,269 +1,236 @@
-var doc;
-var body;
-var pArray;
-var charList = [];
-var version = 10;
-var screenplayFont = 'Courier Prime'; // default screenplay font
-var activeDocOverride = null; // tests can point convert()/docSetUp() at a specific document
+// ============================================================================
+// Fountainize core — classify each paragraph and apply screenplay formatting.
+//
+// Speed: each element is formatted with ONE batched el.setAttributes() call
+// (indents + spacing + line height + bold + font + colour + alignment) instead
+// of many. Gaps are paragraph "space after" MARGINS, not blank paragraphs, so
+// there is no insert/remove churn and a second Format Script pass is a no-op.
+// ============================================================================
 
-// Returns the document to operate on: a test override if set, else the active document.
+var doc, body, pArray;            // active document / its body / paragraph snapshot
+var charList = [];                // [{name, sh}] character shorthands
+var version = 10;
+
+var PT = 72;                      // points per inch
+var BASE_GAP = 12;                // points of "space after" a block — the one spacing knob
+var LINE_HEIGHT = 0.86;           // line spacing
+var screenplayFont = 'Courier Prime';
+
+var activeDocOverride = null;     // tests can point convert()/docSetUp() at a document
 function getActiveDoc(){
   return activeDocOverride ? activeDocOverride : DocumentApp.getActiveDocument();
 }
 
-var Style = function(iLeft, iRight, uCase, lAbove, bold){
-  this.iLeft = iLeft;
-  this.iRight = iRight;
-  this.uCase = uCase;
-  this.lAbove = lAbove;
-  this.bold = bold || false;
-};
+// ---- Element styles --------------------------------------------------------
+// A Style precomputes its full DocumentApp.Attribute map so apply() is one write.
+var LEFT   = DocumentApp.HorizontalAlignment.LEFT;
+var RIGHT  = DocumentApp.HorizontalAlignment.RIGHT;
+var CENTER = DocumentApp.HorizontalAlignment.CENTER;
+var HEADING3 = DocumentApp.ParagraphHeading.HEADING3;
 
-// Format Names (left indent, right indent, uppercase, lines above)
-// https://screenwriting.io/what-is-standard-screenplay-format/
-var scene = new Style(0,0,true, 1, true);
-var sceneWithNumbers = new Style(-0.5,0,true, 1, true);
-var dialogue = new Style(1.0, 1.5, false, 0);
-var character = new Style(2.0, 0, true, 1);
-var action = new Style(0, 0, false, 1);
-var paranthetical = new Style(1.5, 1.9, false, 0);
-var transition = new Style(0, 0, true, 1);
-var centered = new Style(-0.5, 0, false,1);
+function Style(o){
+  this.uCase   = !!o.uCase;
+  this.heading = o.heading || null;            // scenes only (Heading 3 → document outline)
+  var a = {};
+  a[DocumentApp.Attribute.INDENT_START]         = o.iLeft * PT;
+  a[DocumentApp.Attribute.INDENT_FIRST_LINE]    = o.iLeft * PT;
+  a[DocumentApp.Attribute.INDENT_END]           = o.iRight * PT;
+  a[DocumentApp.Attribute.LINE_SPACING]         = LINE_HEIGHT;
+  a[DocumentApp.Attribute.SPACING_BEFORE]       = 0;
+  a[DocumentApp.Attribute.SPACING_AFTER]        = o.spaceAfter;
+  a[DocumentApp.Attribute.HORIZONTAL_ALIGNMENT] = o.align || LEFT;
+  a[DocumentApp.Attribute.BOLD]                 = !!o.bold;
+  a[DocumentApp.Attribute.FONT_FAMILY]          = screenplayFont;
+  a[DocumentApp.Attribute.FONT_SIZE]            = 12;
+  a[DocumentApp.Attribute.FOREGROUND_COLOR]     = '#000000';
+  this.attrs = a;
+}
 
-//var scene = new Style(0,0,true, 2);
-//var sceneWithNumbers = new Style(-0.5,0,true, 2);
-//var dialogue = new Style(1.4, 1.3, false, 0);
-//var character = new Style(2.7, 0, true, 1);
-//var action = new Style(0, 0, false, 1);
-//var paranthetical = new Style(2.1, 1.9, false, 0);
-//var transition = new Style(0, 0, true, 1);
-//var centered = new Style(-0.5, 0, false,1);
+// indents in inches; spaceAfter in points (https://screenwriting.io/what-is-standard-screenplay-format/)
+var scene            = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
+var sceneWithNumbers = new Style({iLeft:-0.5, iRight:0,   uCase:true,  spaceAfter:BASE_GAP,   bold:true, heading:HEADING3});
+var action           = new Style({iLeft:0,    iRight:0,   uCase:false, spaceAfter:BASE_GAP});
+var character        = new Style({iLeft:2.0,  iRight:0,   uCase:true,  spaceAfter:BASE_GAP});
+var dialogue         = new Style({iLeft:1.0,  iRight:1.5, uCase:false, spaceAfter:BASE_GAP/2});
+var parenthetical    = new Style({iLeft:1.5,  iRight:1.9, uCase:false, spaceAfter:BASE_GAP/2});
+var transition       = new Style({iLeft:0,    iRight:0,   uCase:true,  spaceAfter:BASE_GAP,   align:RIGHT});
+var centered         = new Style({iLeft:-0.5, iRight:0,   uCase:false, spaceAfter:BASE_GAP,   align:CENTER});
 
-var firstEl;
+// Apply a style to one paragraph: uppercase (only if it changes), set the scene
+// heading (scenes), then ONE batched setAttributes carrying everything else.
+function apply(el, style){
+  if(style.uCase){
+    var t = el.getText(), up = t.toUpperCase();
+    if(up !== t){ el.setText(up); }
+  }
+  if(style.heading){ el.setHeading(style.heading); } // before setAttributes so our attrs win over the named style
+  el.setAttributes(style.attrs);
+}
 
-// MAIN FUCTION
-// Goes through entire document and determines what formatting each element should have
-// The STYLIZE function applies the formatting
-function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotChar) {
+// ---- Main: classify every paragraph, then apply ----------------------------
+// type: 'whole' (default) formats the body; 'selection' formats the highlighted
+// paragraphs (or the one under the cursor). Returns the character shorthand list.
+function convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotChar){
   charList = getCharsFromStorage();
-  const licenseValid = isLicenseValid();
-  const charLimit = licenseValid ? 15 : 5;
-  const elementLimit = 800;
+  var charLimit = isLicenseValid() ? 15 : 5;
   var sceneNum = 1;
-  
+
   doc = getActiveDoc();
   body = doc.getBody();
   type = type || 'whole';
-  
-  if(autoFontsMargins){
-    docSetUp();
+
+  if(autoFontsMargins){ docSetUp(); }
+
+  pArray = collectParagraphs(type);
+  if(pArray === null){ return; } // selection requested but nothing to format (already alerted)
+
+  // Free-tier length cap (whole-doc only).
+  if(type === 'whole' && !isLicenseValid() && pArray.length > 800){
+    DocumentApp.getUi().alert("Exceeded Element Limit",
+      "Looks like your script is getting pretty long (" + pArray.length + " elements). Fountainize Free limits your script to 800 elements. Upgrade to Pro for unlimited length!",
+      DocumentApp.getUi().ButtonSet.OK);
+    return false;
   }
-  
-  // Get all body and paragraphs from the document
-  if(type === 'whole'){
-    pArray = body.getParagraphs();
-  } else {
-    // If they selected just an area, get that selection
-    try{
-      var selection = doc.getSelection();
-      var rangeArray = selection.getSelectedElements();
-    } catch(e){
-      DocumentApp.getUi().alert(
-        "No Selection",
-        'Please highlight a section to format or switch to "Whole" formatting under Options.',
-        DocumentApp.getUi().ButtonSet.OK);
-      return;
-    }
-    pArray = [];
-    
-    for(var i = 0; i < rangeArray.length; i++){
-      pArray[i] = rangeArray[i].getElement();
-      // Helps fix partial selections - makes partial element the real element, its parent
-      if(typeof pArray[i].getText === "function"){
-        if(pArray[i].getText() === pArray[i].getParent().getText()){
-          pArray[i] = pArray[i].getParent();
-        }
-      }
-    }
-    pArray.unshift(elAbove(pArray[0]));
-  }
-  
-  var pStyle = ''; // Defining the style of the previous element
-  firstEl = true;
-  
-  // If on free license, check if body is too long
-  if(!licenseValid){
-    const bodyElementCount = body.getParagraphs().length;
-    if(bodyElementCount > elementLimit && elementLimit > -1){
-      DocumentApp.getUi().alert(
-        "Exceeded Element Limit",
-        "Looks like your script is getting pretty long (" + bodyElementCount + " elements). Fountainize Free limits your script to 800 elements (dialogue, characters, etc). Upgrade to Pro for unlimited length!",
-        DocumentApp.getUi().ButtonSet.OK);
-      return false;
-    }
-  }
-  // Loop through all elements!
+
+  var pStyle = '';
   for(var i = 0; i < pArray.length; i++){
     var el = pArray[i];
     var text = el.getText();
-    
-    // Empty / whitespace-only line: remove it. Stripping EVERY pre-existing blank
-    // and then re-inserting exactly the wanted number below is what makes a second
-    // Format Script pass a no-op (instead of piling on more blank lines). It also
-    // stops a lone-space line from being misread as a CHARACTER cue. Page-break
-    // paragraphs (e.g. a title page) are preserved.
-    if(!text || text.trim() === ''){
-      var hasPageBreak = false;
-      try { hasPageBreak = el.findElement(DocumentApp.ElementType.PAGE_BREAK) !== null; } catch(e){}
-      if(!hasPageBreak){
-        try { if(body.getNumChildren() > 1){ body.removeChild(el); } } catch(e){}
-      }
-      continue;
-    }
 
-    // Skip over it if it's centered
-    if(el.getAlignment() === DocumentApp.HorizontalAlignment.CENTER){
-      continue;
-    }
+    // Blank / whitespace-only line: remove it (gaps are margins now). Page breaks kept.
+    if(!text || text.trim() === ''){ removeIfBlank(el); continue; }
 
-    // Set the line spacing according to standards (have to do this per-paragraph for some reason)
-    el.setLineSpacing(0.86);
-    
-    //prompt(text);
-    
-    // SCENE HEADER
-    // Starts with INT./EXT. (incl. combined forms like INT./EXT., EXT/INT., I/E.),
-    // optionally preceded by a scene number such as "12  INT. ROOM".
-    var sceneText = text.toUpperCase();
-    var sceneConditions = [
-      /^(INT|EXT|EST|I\/E|E\/I)[\.\/]/.test(sceneText), // starts with int./ext. or a combined form
-      !isNaN(parseInt(text.substr(0,1))) && (sceneText.indexOf('INT.') > -1 || sceneText.indexOf('EXT.') > -1) // numbered
-    ];
+    // Leave manually-centered paragraphs alone (e.g. a title the user centered).
+    if(el.getAlignment() === CENTER){ continue; }
 
-    if(matches(sceneConditions)){
-      // Strip any existing leading scene number so it isn't duplicated, but keep the
-      // FULL int./ext. prefix (don't truncate combined forms like EXT/INT.).
-      var sceneHeader = sceneText.replace(/^\s*\d+[\.\):\t ]+/, '');
-      if(sceneNumbers){
-        el.setText(sceneNum + "\t" + sceneHeader);
-        el = stylize(el, sceneWithNumbers);
-        sceneNum = sceneNum + 1;
-      } else {
-        el.setText(sceneHeader);
-        el = stylize(el, scene);
-      }
-      // Tag the scene header as Heading 3 so it appears in the document outline /
-      // chapters sidebar. setHeading applies the Heading 3 named style (its own
-      // font, size and colour), so force the screenplay look straight back with
-      // explicit run formatting, which overrides the named style. A getAttributes/
-      // setAttributes round-trip does NOT work here: the inherited font and the
-      // run-level bold come back null and get wiped.
-      el.setHeading(DocumentApp.ParagraphHeading.HEADING3);
-      el.editAsText()
-        .setFontFamily(screenplayFont)
-        .setFontSize(12)
-        .setForegroundColor('#000000')
-        .setBold(true);
+    var upper = text.toUpperCase();
+
+    // SCENE — INT./EXT. (and combined forms), optionally preceded by a scene number.
+    if(/^(INT|EXT|EST|I\/E|E\/I)[\.\/]/.test(upper) ||
+       (!isNaN(parseInt(text.charAt(0))) && (upper.indexOf('INT.') > -1 || upper.indexOf('EXT.') > -1))){
+      var header = upper.replace(/^\s*\d+[\.\):\t ]+/, '');                 // strip old number, keep full prefix
+      var headerText = sceneNumbers ? (sceneNum++ + '\t' + header) : header;
+      if(headerText !== text){ el.setText(headerText); }
+      apply(el, sceneNumbers ? sceneWithNumbers : scene);
       pStyle = 'scene';
       continue;
     }
-    
-    // PARANTHETICAL
-    // A line that is WHOLLY a paranthetical: starts with '(' and ends with ')'.
-    // An inline "(beat) some dialogue" line is intentionally NOT matched here - it
-    // falls through to DIALOGUE so the action line after it isn't pulled into dialogue.
-    var trimmedText = text.trim();
-    if(trimmedText.charAt(0) === '(' && trimmedText.charAt(trimmedText.length - 1) === ')'){
-      el = stylize(el, paranthetical);
-      pStyle = 'paranthetical';
+
+    // PARENTHETICAL — a line that is WHOLLY "(...)". Inline "(beat) line" is left for DIALOGUE.
+    var trimmed = text.trim();
+    if(trimmed.charAt(0) === '(' && trimmed.charAt(trimmed.length - 1) === ')'){
+      apply(el, parenthetical);
+      pStyle = 'parenthetical';
       continue;
     }
-    
-    // CENTERED TEXT
-    // Bookended by >/<
-    if(text.substr(0,1) === '>' && text.substr(text.length - 1, 1) === '<'){
-      el.setText(text.substr(1, text.length - 2));
-      el = stylize(el, centered);
-      el.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+
+    // CENTERED — ">text<"
+    if(text.charAt(0) === '>' && text.charAt(text.length - 1) === '<'){
+      el.setText(text.substring(1, text.length - 1));
+      apply(el, centered);
       pStyle = 'action';
       continue;
     }
-    
-    // TRANSITION (checked before CHARACTER so "CUT TO:"/"FADE TO:" aren't read as names)
-    // 1. Ends in " to:", " in:", or "out:" (last 4 chars)
-    var endString = text.substring(text.length - 4).toLowerCase()
-    if(endString === ' to:' || endString === ' in:' || endString === 'out:'){
-      el = stylize(el, transition);
-      el.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+
+    // TRANSITION — ends in " to:", " in:", "out:" (before CHARACTER so "CUT TO:" isn't a name).
+    var tail = text.substring(text.length - 4).toLowerCase();
+    if(tail === ' to:' || tail === ' in:' || tail === 'out:'){
+      apply(el, transition);
       pStyle = 'transition';
       continue;
     }
 
-    // CHARACTER (checked before DIALOGUE so a real cue is never swallowed as dialogue)
-    // A line is a character cue when it is all uppercase, does not end in punctuation,
-    // AND the next non-blank line is "speakable" (prose/paranthetical/shout) - so this
-    // all-caps line is a NAME rather than a sign, transition or stray caps.
-    // Also expands shorthand character names.
-    var upperText = text.toUpperCase();
-    // Remove bracketed text first (ex. (V.O.), (CONT'D))
-    const firstBracket = upperText.indexOf("(");
-    var charNoBrackets = upperText;
-    var charBracketsOnly = "";
-    if(firstBracket > -1){
-      charNoBrackets = upperText.substring(0,firstBracket - 1);
-      charBracketsOnly = upperText.substring(firstBracket - 1);
-    }
-
-    for(var j = 0; j < charList.length; j++){
-      if(charNoBrackets == charList[j].sh){
-        const newText = charList[j].name + charBracketsOnly;
-        el.setText(newText);
-        text = el.getText();
-        upperText = text.toUpperCase();
-        break;
-      }
-    }
-
-    // Is it all uppercase, and does spoken text follow it?
-    if(upperText === text){
-      const lastChar = upperText.slice(-1);
-      const endsInPunct = endPunctuationMeansNotChar && (lastChar === "." || lastChar === "!" || lastChar === "?" || lastChar === "-");
-      if(!endsInPunct && speakableFollows(i)){
-        el = stylize(el, character);
+    // CHARACTER (before DIALOGUE so a real cue is never swallowed). All-caps name, not
+    // ending in punctuation, with a "speakable" next line. Also expands shorthands.
+    var bracket = upper.indexOf('(');                                       // strip (V.O.)/(CONT'D) for the name
+    var nameOnly = bracket > -1 ? upper.substring(0, bracket - 1) : upper;
+    var brackets = bracket > -1 ? upper.substring(bracket - 1) : '';
+    var expanded = expandShorthand(el, nameOnly, brackets);
+    if(expanded !== null){ text = expanded; upper = text.toUpperCase(); }
+    if(upper === text){
+      var last = upper.slice(-1);
+      var endsPunct = endPunctuationMeansNotChar && (last === '.' || last === '!' || last === '?' || last === '-');
+      if(!endsPunct && speakableFollows(i)){
+        apply(el, character);
         pStyle = 'character';
-        if(charList.length < charLimit){
-          // Add the character to the charList
-          addToCharList(charNoBrackets);
-        }
+        if(charList.length < charLimit){ addToCharList(nameOnly); }
         continue;
       }
     }
 
-    // DIALOGUE
-    // The element directly follows a character cue or a paranthetical.
-    // We deliberately do NOT also key off indentation or adjacent blank lines:
-    // those are rewritten by the formatter itself, which would make a stale/wrong
-    // dialogue formatting "sticky" across re-runs. Keying only off the preceding
-    // element keeps re-formatting self-correcting and idempotent.
-    if(pStyle === 'character' || pStyle === 'paranthetical'){
-      el = stylize(el, dialogue);
+    // DIALOGUE — directly follows a cue or a parenthetical (keyed only off the prior
+    // element, so re-formatting is self-correcting and idempotent).
+    if(pStyle === 'character' || pStyle === 'parenthetical'){
+      apply(el, dialogue);
       pStyle = 'dialogue';
       continue;
     }
 
-    // ACTION
-    // Basically anything else.
-    el = stylize(el, action);
+    // ACTION — everything else.
+    apply(el, action);
     pStyle = 'action';
+  }
 
-  } // End of element looping
-  
-  setCharsToStorage(charList)
+  setCharsToStorage(charList);
   return charList;
-} // End of convert function
+}
 
-// Returns the text of the next non-blank element after index i in pArray (or '' if none).
-// Whitespace-only elements count as blank.
+// Format just the selection / the paragraph under the cursor — fast, incremental.
+function formatSelection(sceneNumbers, autoFontsMargins, endPunctuationMeansNotChar){
+  return convert('selection', sceneNumbers, autoFontsMargins, endPunctuationMeansNotChar);
+}
+
+// Returns the paragraphs to format. For 'selection', seeds context with the line above.
+function collectParagraphs(type){
+  if(type === 'whole'){ return body.getParagraphs(); }
+
+  var els, selection = doc.getSelection();
+  if(selection){
+    els = selection.getSelectedElements().map(function(r){
+      var el = r.getElement();
+      // promote a fully-selected text run to its paragraph
+      if(typeof el.getText === 'function' && el.getParent() && el.getText() === el.getParent().getText()){
+        return el.getParent();
+      }
+      return el;
+    });
+  } else {
+    var cursor = doc.getCursor();
+    if(!cursor){
+      DocumentApp.getUi().alert("No Selection",
+        'Put your cursor in a line (or highlight a section) to format, or switch to "Whole" under Options.',
+        DocumentApp.getUi().ButtonSet.OK);
+      return null;
+    }
+    var el = cursor.getElement();
+    while(el && el.getType && el.getType() !== DocumentApp.ElementType.PARAGRAPH){ el = el.getParent(); }
+    els = [el];
+  }
+  els.unshift(elAbove(els[0]));   // the line above seeds pStyle + the speakable look-ahead
+  return els;
+}
+
+// Remove a blank/whitespace paragraph (but keep page-break paras, e.g. a title page).
+function removeIfBlank(el){
+  var hasPageBreak = false;
+  try { hasPageBreak = el.findElement(DocumentApp.ElementType.PAGE_BREAK) !== null; } catch(e){}
+  if(!hasPageBreak){
+    try { if(body.getNumChildren() > 1){ body.removeChild(el); } } catch(e){}
+  }
+}
+
+// If an all-caps name matches a stored shorthand, expand it in place; return the new text (else null).
+function expandShorthand(el, nameOnly, brackets){
+  for(var j = 0; j < charList.length; j++){
+    if(nameOnly === charList[j].sh){
+      el.setText(charList[j].name + brackets);
+      return el.getText();
+    }
+  }
+  return null;
+}
+
+// Text of the next non-blank paragraph after index i (or '' if none).
 function nextSpeakableText(i){
   for(var k = i + 1; k < pArray.length; k++){
     var t = '';
@@ -273,220 +240,96 @@ function nextSpeakableText(i){
   return '';
 }
 
-// True if the line after index i looks like spoken/acted prose (contains a lowercase
-// letter, is a paranthetical, or ends in !/?), meaning the all-uppercase line at i is
-// a character NAME rather than a sign, transition or heading.
+// True if the line after i looks like spoken/acted prose (has a lowercase letter, is a
+// parenthetical, or ends in !/?) — i.e. the all-caps line at i is a NAME, not a heading.
 function speakableFollows(i){
   var nxt = nextSpeakableText(i);
   if(!nxt){ return false; }
   return /[a-z]/.test(nxt) || nxt.charAt(0) === '(' || /[!?]$/.test(nxt.trim());
 }
 
-
-// STYLIZE
-// This function applies the proper formatting to each element
-// based on what the main function decided
-function stylize(el, style){
-  
-  // Set the margins
-  el.setIndentFirstLine(style.iLeft * 72);
-  el.setIndentStart(style.iLeft * 72);
-  el.setIndentEnd(style.iRight * 72);
-  
-  // Uppercase if appropriate
-  if(style.uCase){
-    var text = el.getText();
-    el.setText(text.toUpperCase());
-  }
-
-  // Bold if appropriate (e.g. scene headers). setText above clears run formatting,
-  // so this re-applies bold to the whole element.
-  if(style.bold){
-    el.editAsText().setBold(true);
-  }
-
-  // Insert exactly style.lAbove blank lines above this element. The main loop has
-  // already removed EVERY pre-existing blank paragraph, so a re-run strips them all
-  // and re-inserts the same number - the document comes out identical, no doubling.
-  // Inserted blanks are kept plain so they don't pollute the outline / Heading 3.
-  var numSpacesAbove = firstEl ? 0 : style.lAbove;
-  for(var s = 0; s < numSpacesAbove; s++){
-    var blank = body.insertParagraph(body.getChildIndex(el), '');
-    blank.setHeading(DocumentApp.ParagraphHeading.NORMAL);
-    blank.setIndentStart(0); blank.setIndentFirstLine(0); blank.setIndentEnd(0);
-  }
-
-  firstEl = false;
-  return el;
-} // End of STYLIZE function
-
-// Set Document margin and font settings 
-// https://screenwriting.io/what-is-standard-screenplay-format/
+// Document-wide page margins + base font (Courier Prime). Per-element font/spacing
+// is set in apply(); this covers the page setup and any unformatted/blank paragraphs.
 function docSetUp(){
   doc = getActiveDoc();
   var body = doc.getBody();
-  var footer = doc.getFooter();
-  if(footer == undefined){
-    footer = doc.addFooter();
-  }
-  
-  // Set margins
-  body.setMarginTop(72); // 1.0" top margin
-  body.setMarginRight(72); // 1.0" right margin
-  body.setMarginBottom(72); // 1.0" bottom margin
-  body.setMarginLeft(108); // 1.5" left margin
-  
-  // Set font
+  var footer = doc.getFooter() || doc.addFooter();
+
+  body.setMarginTop(72);     // 1.0"
+  body.setMarginRight(72);   // 1.0"
+  body.setMarginBottom(72);  // 1.0"
+  body.setMarginLeft(108);   // 1.5"
+
   var style = {};
-  
   style[DocumentApp.Attribute.FONT_FAMILY] = screenplayFont;
   style[DocumentApp.Attribute.FONT_SIZE] = 12;
   style[DocumentApp.Attribute.FOREGROUND_COLOR] = '#000000';
   body.setAttributes(style);
-  
-  style[DocumentApp.Attribute.HORIZONTAL_ALIGNMENT] =
-    DocumentApp.HorizontalAlignment.RIGHT;
+
+  style[DocumentApp.Attribute.HORIZONTAL_ALIGNMENT] = RIGHT;
   footer.setAttributes(style);
-  try{
-    footer.editAsText().setAttributes(style);
+  try { footer.editAsText().setAttributes(style); } catch(e){}
+}
+
+// The element 'num' positions above el (defaults to 1, clamped at the top).
+function elAbove(el, num){
+  var n = num || 1, idx = 0;
+  try { idx = doc.getBody().getChildIndex(el); } catch(e){}
+  var above = idx - n;
+  if(above < 0){ above = 0; }
+  try { return doc.getBody().getChild(above); }
+  catch(e){ return doc.getBody().getChild(0); }
+}
+
+// ---- Per-document storage (characters + sidebar settings) ------------------
+function setCharsToStorage(chars){
+  try {
+    var props = PropertiesService.getDocumentProperties();
+    if(!props){ return; }   // no bound document (e.g. running tests)
+    props.setProperty('chars', JSON.stringify(chars));
   } catch(e){}
 }
 
-// EL ABOVE
-// Returns the element 'num' elements above the selected one.
-// 'num' is optional, if not sent it defaults to 1 (right above)
-function elAbove(el, num){
-  var i = num || 1;
-  var elIndex = 0;
-  try {
-    elIndex = doc.getBody().getChildIndex(el);
-  }
-  catch(err) {
-    
-  }
-  
-  var aboveIndex = elIndex - i;
-  // Don't get element with negative index
-  aboveIndex = aboveIndex > -1 ? aboveIndex : 0;
-  
-  // Try to get the element. If it returns an error (off the page) then return that element.
-  try {
-    return doc.getBody().getChild(aboveIndex);
-  }
-  catch(err) {
-    return doc.getBody().getChildIndex(doc.getBody().getChild(0));
-  }
-}
-
-// Store characters array as a document property
-function setCharsToStorage(charList){
-  try{
-    const documentProperties = PropertiesService.getDocumentProperties();
-    if(!documentProperties){ return; } // no bound document (e.g. running tests)
-    documentProperties.setProperty('chars', JSON.stringify(charList));
-  } catch(e){
-    DocumentApp.getUi().alert(
-      "Issue saving characters to storage",
-      "Looks like we had an issue saving your characters. It is probably a one-time thing, but if this keeps happening try re-installing the add-on or report the issue. Thanks!",
-      DocumentApp.getUi().ButtonSet.OK);
-  }
-  //  documentProperties.setProperty('chars', JSON.stringify([]));
-}
-
-// Retrieve characters array from the document properties
 function getCharsFromStorage(){
-  let charStr = "";
-  let chars = [];
-  try{
-    const documentProperties = PropertiesService.getDocumentProperties();
-    if(!documentProperties){ return []; } // no bound document (e.g. running tests)
-    charStr = documentProperties.getProperty('chars');
-    chars = JSON.parse(charStr);
-    if(!chars){
-      chars = []; 
-    }
-  } catch(e){
-    DocumentApp.getUi().alert(
-      "Issue saving characters to storage",
-      "Looks like we had an issue saving your characters. It is probably a one-time thing, but if this keeps happening try re-installing the add-on or report the issue. Thanks!",
-      DocumentApp.getUi().ButtonSet.OK);
-    chars = []
-  }
-  return chars || [];
+  try {
+    var props = PropertiesService.getDocumentProperties();
+    if(!props){ return []; }
+    return JSON.parse(props.getProperty('chars')) || [];
+  } catch(e){ return []; }
+}
+
+function getCharsFromDOM(domCharList){
+  setCharsToStorage(domCharList);
 }
 
 function storeSettings(name, value){
-  try{
-    const documentProperties = PropertiesService.getDocumentProperties();
-    const settingsStr = documentProperties.getProperty('doc-settings');
-    var settings = JSON.parse(settingsStr);
-    settings = settings || {}
+  try {
+    var props = PropertiesService.getDocumentProperties();
+    if(!props){ return; }
+    var settings = JSON.parse(props.getProperty('doc-settings')) || {};
     settings[name] = value;
-    documentProperties.setProperty('doc-settings', JSON.stringify(settings));
-  } catch(e){
-    DocumentApp.getUi().alert(
-      "Issue getting saved settings",
-      "Looks like we had an issue saving your settings. It is probably a one-time thing, but if this keeps happening try re-installing the add-on or report the issue. Thanks!",
-      DocumentApp.getUi().ButtonSet.OK);
+    props.setProperty('doc-settings', JSON.stringify(settings));
+  } catch(e){}
+}
+
+function getSettings(){
+  try {
+    var props = PropertiesService.getDocumentProperties();
+    if(!props){ return {}; }
+    return JSON.parse(props.getProperty('doc-settings')) || {};
+  } catch(e){ return {}; }
+}
+
+// Add a character + a minimal unique shorthand to charList (if not already present).
+function addToCharList(name){
+  for(var i = 0; i < charList.length; i++){
+    if(charList[i].name === name){ return; }
   }
-  
-}
-
-function getSettings(name, value){
-  try{
-    const documentProperties = PropertiesService.getDocumentProperties();
-    const settingsStr = documentProperties.getProperty('doc-settings');
-    const settings = JSON.parse(settingsStr);
-    return settings || {};
-  } catch(e){
-    DocumentApp.getUi().alert(
-      "Issue getting saved settings",
-      "Looks like we had an issue getting your saved settings. It is probably a one-time thing, but if this keeps happening try re-installing the add-on or report the issue. Thanks!",
-      DocumentApp.getUi().ButtonSet.OK);
-  }
-  return {};
-}
-
-function getCharsFromDOM(DOMcharList){
-  setCharsToStorage(DOMcharList);
-}
-
-// Check if Character is in charList and add them if not.
-// Create a shortcut for them based on the minimum unique letters
-// charList = [{name, sh}]
-function addToCharList(char){
-  // If the name is already on the list, then get the heck out of here man
-  if(charList.length > 0){
-    for(i = 0; i < charList.length; i++){
-      if(charList[i].name === char) {
-        return;
-      }
+  for(var j = 1; j <= name.length; j++){
+    var sh = name.substr(0, j), taken = false;
+    for(var k = 0; k < charList.length; k++){
+      if(charList[k].sh === sh){ taken = true; break; }
     }
+    if(!taken){ charList.push({ name: name, sh: sh }); return; }
   }
-  // Okay so it's not on the list. Make a unique shortcut
-  var charObj = {};
-  charObj.name = char;
-  for(j = 1; j < char.length + 1; j++){
-    var SHtaken = false;
-    var currentShorthand = char.substr(0, j);
-    for(k = 0; k < charList.length; k++){
-      if(charList[k].sh == currentShorthand){
-        SHtaken = true;
-        break;
-      }
-    }
-    if(!SHtaken){
-      charObj.sh = char.substr(0,j);
-      charList.push(charObj);
-      break;
-    }
-  }
-  
 }
-
-function monthlyLicenseExpiryCheck(){
-  // TODO: Get license from storage and see whether it's expired. Update storage if it is.
-  // Once per month, check whether it's expired, refunded, or charged back
-  
-}
-

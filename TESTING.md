@@ -50,8 +50,9 @@ That's it — no command line and no external tooling required.
 | Inline parenthetical `(beat) line` | styled as dialogue; the following action line is **not** swallowed |
 | Transition `… TO:` / `IN:` / `OUT:` | styled as a transition, right-aligned |
 | Centered text `>…<` | brackets stripped, centered |
-| Spacing | exactly 1 blank line between blocks, 0 within a block |
-| Idempotency | re-running Format Script produces the identical result |
+| Spacing | paragraph **space-after margins** (no blank lines): a full gap after blocks, a half gap after dialogue/parenthetical, zero blank paragraphs |
+| Idempotency | re-running Format Script produces the identical result (no extra lines/spaces/headers) |
+| Format selection / block | `formatSelection()` styles only the selected paragraphs (or the one under the cursor) and leaves the rest untouched |
 
 ### Not implemented yet (flagged by the suite, with current behavior shown)
 

@@ -1,363 +1,186 @@
 <script>
-var coll = document.getElementsByClassName("collapsible");
-var i;
-var titlePageActive;
+// Vanilla-JS sidebar logic (no jQuery). Talks to the server via google.script.run.
+(function(){
+  var run = google.script.run;
+  var titlePageActive = false;
+  var licenseValid = false;
 
-for (i = 0; i < coll.length; i++) {
-	coll[i].addEventListener("click", function () {
-		this.classList.toggle("active");
-		var content = this.nextElementSibling;
-		if (content.style.display === "block") {
-			content.style.display = "none";
-		} else {
-			content.style.display = "block";
-		}
-	});
-}
+  function $(id){ return document.getElementById(id); }
+  function qs(sel){ return document.querySelector(sel); }
+  function on(id, ev, fn){ var el = $(id); if(el){ el.addEventListener(ev, fn); } }
+  function setBusy(btn, busy, label){ btn.disabled = busy; btn.textContent = busy ? 'Working…' : label; }
 
-var chars = [];
-var roI;
-var licenseValid = false;
+  // ---- collapsible accordions ----
+  Array.prototype.forEach.call(document.getElementsByClassName('collapsible'), function(c){
+    c.addEventListener('click', function(){
+      this.classList.toggle('active');
+      var content = this.nextElementSibling;
+      content.style.display = content.style.display === 'block' ? 'none' : 'block';
+    });
+  });
 
-// Format the document
-$("#format").click(function () {
-	// If title page is active, take it off
-	if (titlePageActive) {
-		google.script.run.removeTitlePage();
-		$("#title-page-button").removeClass("red").addClass("blue");
-		$("#format").removeClass("red").addClass("blue");
-		$("#title-page-button").text("Add Title Page");
-		$("#format").text("Format Script");
-		titlePageActive = !titlePageActive;
-        google.script.run.storeSettings("titlePageActive", titlePageActive);
-		return;
-	}
+  // ---- read sidebar state ----
+  function options(){
+    return {
+      type: $('r-selection').checked ? 'selection' : 'whole',
+      sceneNumbers: $('scene-numbers').checked,
+      endPunct: $('endPunctuationMeansNotChar').checked,
+      autoFonts: $('format-margins-option').checked
+    };
+  }
+  function tpInfo(){
+    return {
+      title: $('tp-title').value, subtitle: $('tp-subtitle').value, author: $('tp-author').value,
+      contact1: $('tp-contact1').value, contact2: $('tp-contact2').value,
+      contact3: $('tp-contact3').value, contact4: $('tp-contact4').value
+    };
+  }
+  function charListFromGrid(){
+    var list = [], max = licenseValid ? 16 : 6;
+    for(var i = 1; i < max; i++){
+      var sh = qs('#char' + i + ' .charShort').value;
+      if(sh !== '' && sh !== '-'){
+        list.push({ sh: sh.toUpperCase(), name: qs('#char' + i + ' .charLong').value.toUpperCase() });
+      }
+    }
+    return list;
+  }
 
-	// Determine if whole document or just selection
-	const type = $("#r-selection").is(":checked") ? "selection" : "whole";
-	// Determine whether scene numbers need to be added
-	const sceneNumbers = $("#scene-numbers").is(":checked");
-    // Determine whether characters can have puncutation at end
-	const endPunctuationMeansNotChar = $("#endPunctuationMeansNotChar").is(":checked");
-    // Determine whether to also format fonts/margins
-    const autoFontsMargins = $("#format-margins-option").is(":checked");
-	// Show loading symbol
-	document.getElementById("format").innerHTML =
-		"<i class='material-icons' id='rotate'>cached</i>";
-	var angle = 0;
-	roI = setInterval(function () {
-		var circle = document.getElementById("rotate");
-		angle += 5;
-		circle.style.transform = "rotate(" + angle + "deg)";
-		if (angle === 10) {
-			circle.style.display = "inherit";
-		}
-	}, 30);
+  // ---- format ----
+  on('format', 'click', function(){
+    if(titlePageActive){ toggleTitlePage(); return; }
+    var btn = $('format'), o = options();
+    setBusy(btn, true, 'Format Script');
+    run.withSuccessHandler(function(){
+      run.withSuccessHandler(function(chars){ setBusy(btn, false, 'Format Script'); fillCharGrid(chars); })
+         .withFailureHandler(function(){ setBusy(btn, false, 'Format Script'); })
+         .convert(o.type, o.sceneNumbers, o.autoFonts, o.endPunct);
+    }).getCharsFromDOM(charListFromGrid());
+  });
 
-	// Get title page info
-	var tpInfo = {
-		title: document.getElementById("tp-title").value,
-		subtitle: document.getElementById("tp-subtitle").value,
-		author: document.getElementById("tp-author").value,
-		contact1: document.getElementById("tp-contact1").value,
-		contact2: document.getElementById("tp-contact2").value,
-		contact3: document.getElementById("tp-contact3").value,
-		contact4: document.getElementById("tp-contact4").value,
-	};
+  // ---- format just the current block / selection (fast, incremental) ----
+  on('format-block', 'click', function(){
+    var btn = $('format-block'), o = options();
+    setBusy(btn, true, 'Format This Block');
+    run.withSuccessHandler(function(){
+      run.withSuccessHandler(function(chars){ setBusy(btn, false, 'Format This Block'); fillCharGrid(chars); })
+         .withFailureHandler(function(){ setBusy(btn, false, 'Format This Block'); })
+         .formatSelection(o.sceneNumbers, o.autoFonts, o.endPunct);
+    }).getCharsFromDOM(charListFromGrid());
+  });
 
-	// generate charList
-	var charList = [];
-	var charMax = licenseValid ? 16 : 6;
-	for (var i = 1; i < charMax; i++) {
-		var charObj = {};
-        const domValue = document.querySelector("#char" + i + " .charShort").value;
-		if (domValue !== "" && domValue !== "-") {
-			charObj.sh = document
-				.querySelector("#char" + i + " .charShort")
-				.value.toUpperCase();
-			charObj.name = document
-				.querySelector("#char" + i + " .charLong")
-				.value.toUpperCase();
-			charList.push(charObj);
-		}
-	}
+  // Repopulate the character-shortcut grid from the server's char list.
+  function fillCharGrid(chars){
+    chars = chars || [];
+    for(var i = 1; i < 16; i++){
+      var shEl = qs('#char' + i + ' .charShort'), longEl = qs('#char' + i + ' .charLong');
+      if(i <= chars.length){
+        shEl.value = chars[i - 1].sh; longEl.value = chars[i - 1].name;
+      } else if(i < 6){
+        shEl.value = ''; longEl.value = '';
+      } else {
+        shEl.value = licenseValid ? '' : '-';
+        longEl.value = licenseValid ? '' : 'Upgrade for more';
+      }
+    }
+  }
 
-	google.script.run
-		.withSuccessHandler(charsReceived)
-		.getCharsFromDOM(charList);
+  // ---- set up document ----
+  on('doc', 'click', function(){ run.docSetUp(); });
 
-	function charsReceived() {
-		google.script.run
-			.withSuccessHandler(formatComplete)
-			.convert(type, sceneNumbers, autoFontsMargins, endPunctuationMeansNotChar);
-	}
-});
+  // ---- title page toggle ----
+  function toggleTitlePage(){
+    var tpBtn = $('title-page-button'), fmtBtn = $('format');
+    if(titlePageActive){
+      run.removeTitlePage();
+      tpBtn.classList.replace('red', 'blue'); fmtBtn.classList.replace('red', 'blue');
+      tpBtn.textContent = 'Add Title Page'; fmtBtn.textContent = 'Format Script';
+    } else {
+      run.addTitlePage(tpInfo());
+      tpBtn.classList.replace('blue', 'red'); fmtBtn.classList.replace('blue', 'red');
+      tpBtn.textContent = 'Remove Title Page'; fmtBtn.textContent = 'Remove Title Page';
+    }
+    titlePageActive = !titlePageActive;
+    run.storeSettings('titlePageActive', titlePageActive);
+  }
+  on('title-page-button', 'click', toggleTitlePage);
 
-function formatComplete(charList) {
-	clearInterval(roI);
-	if (!titlePageActive) {
-		document.getElementById("format").innerHTML = "Format Script";
-	}
+  // ---- options (persist on change) ----
+  on('scene-numbers', 'click', function(){ run.storeSettings('sceneNumbers', $('scene-numbers').checked); });
+  on('format-margins-option', 'click', function(){ run.storeSettings('formatMarginsOption', $('format-margins-option').checked); });
+  on('r-whole', 'click', function(){ run.storeSettings('formatRange', 'whole'); });
+  on('r-selection', 'click', function(){ run.storeSettings('formatRange', 'selection'); });
 
-	const clLength = charList.length;
-	for (i = 1; i < 16; i++) {
-		//        alert(i);
-		if (i <= clLength) {
-			document.querySelector("#char" + i + " .charShort").value =
-				charList[i - 1].sh;
-			document.querySelector("#char" + i + " .charLong").value =
-				charList[i - 1].name;
-		} else {
-			if (i < 6) {
-				document.querySelector("#char" + i + " .charShort").value = "";
-				document.querySelector("#char" + i + " .charLong").value = "";
-			} else {
-				document.querySelector(
-					"#char" + i + " .charShort"
-				).value = licenseValid ? "" : "-";
-				document.querySelector(
-					"#char" + i + " .charLong"
-				).value = licenseValid ? "" : "Upgrade for more";
-			}
-		}
-	}
-}
+  // ---- license ----
+  on('license-btn', 'click', function(){
+    var key = $('license-text').value;
+    if(key){ run.withSuccessHandler(licenseResult).checkLicenseKey(key); }
+  });
+  on('unlicense-btn', 'click', function(){ run.withSuccessHandler(function(){ alert('License successfully removed!'); }).removeLicense(); });
+  on('show-license-btn', 'click', function(){ run.withSuccessHandler(showLicense).getLicense(); });
 
-$("#doc").click(function () {
-	google.script.run.docSetUp();
-});
+  function showLicense(license){
+    if(license){ try { $('your-license-key').textContent = JSON.parse(license).license_key; } catch(e){} }
+  }
+  function licenseResult(data){
+    if(data && data.success === true && data.purchase){
+      alert('Thanks! License activated. Refresh your document to apply.');
+    } else {
+      alert("Sorry! We didn't recognize that license key. Check it's correct, then contact cathcart.brandon@gmail.com for support.");
+    }
+  }
 
-$("#license-btn").click(function () {
-	var license = document.querySelector("#license-text").value;
-	if (license != "") {
-		google.script.run
-			.withSuccessHandler(alertLicenseStatus)
-			.checkLicenseKey(license);
-	}
-});
+  // ---- restore saved settings + license-driven UI on load ----
+  function loadSettings(s){
+    if(!s){ return; }
+    $('scene-numbers').checked = !!s.sceneNumbers;
+    $('format-margins-option').checked = s.hasOwnProperty('formatMarginsOption') ? s.formatMarginsOption : true;
+    var whole = !s.hasOwnProperty('formatRange') || s.formatRange === 'whole';
+    $('r-whole').checked = whole; $('r-selection').checked = !whole;
 
-$("#unlicense-btn").click(function () {
-google.script.run
-.withSuccessHandler(removeLicenseAlert)
-.removeLicense();
-});
+    if(s.tpInfo){
+      var t = s.tpInfo;
+      $('tp-title').value = t.title || ''; $('tp-subtitle').value = t.subtitle || ''; $('tp-author').value = t.author || '';
+      $('tp-contact1').value = t.contact1 || ''; $('tp-contact2').value = t.contact2 || '';
+      $('tp-contact3').value = t.contact3 || ''; $('tp-contact4').value = t.contact4 || '';
+    }
+    titlePageActive = !!s.titlePageActive;
+    if(titlePageActive){
+      $('title-page-button').classList.replace('blue', 'red'); $('format').classList.replace('blue', 'red');
+      $('title-page-button').textContent = 'Remove Title Page'; $('format').textContent = 'Remove Title Page';
+    }
+  }
 
-$("#show-license-btn").click(function () {
-google.script.run.withSuccessHandler(showLicense).getLicense();
-});
+  function changeDOMBasedOnLicense(valid){
+    licenseValid = valid;
+    var groups = document.querySelectorAll('.char-group');
+    if(licenseValid){
+      groups.forEach(function(g){ g.classList.remove('disabled'); });
+      $('free-pro-content').style.display = 'none';
+      $('pro-pro-content').style.display = 'block';
+      $('pro-tab-text').textContent = 'Your pro license';
+    } else {
+      groups.forEach(function(g){
+        var n = Number((g.id || '').replace('char', ''));
+        if(n > 5){ qs('#' + g.id + ' .charLong').value = 'Upgrade for more'; g.classList.add('disabled'); }
+      });
+      var tpBtn = $('title-page-button');
+      tpBtn.textContent = 'Add Title Page (Pro)'; tpBtn.classList.add('disabled');
+      $('free-pro-content').style.display = 'block';
+      $('pro-pro-content').style.display = 'none';
+    }
+  }
 
-function showLicense(license){
-if(license){
-var jsonLicense = JSON.parse(license)
-console.log(jsonLicense);
-   document.querySelector("#your-license-key").innerHTML = jsonLicense.license_key;
-}
-}
+  // gentle periodic pulse on the Pro tab
+  setInterval(function(){
+    var el = $('pro-collapsible'); if(!el){ return; }
+    var n = 0;
+    var t = setInterval(function(){ el.classList.toggle('blue-text'); if(++n >= 6){ clearInterval(t); el.classList.remove('blue-text'); } }, 500);
+  }, 1000 * 60 * 5);
 
-
-$("#title-page-button").click(function () {
-	if (titlePageActive) {
-		google.script.run.removeTitlePage();
-		$("#title-page-button").removeClass("red").addClass("blue");
-		$("#format").removeClass("red").addClass("blue");
-		$("#title-page-button").text("Add Title Page");
-		$("#format").text("Format Script");
-	} else {
-		var tpInfo = {
-			title: document.getElementById("tp-title").value,
-			subtitle: document.getElementById("tp-subtitle").value,
-			author: document.getElementById("tp-author").value,
-			contact1: document.getElementById("tp-contact1").value,
-			contact2: document.getElementById("tp-contact2").value,
-			contact3: document.getElementById("tp-contact3").value,
-			contact4: document.getElementById("tp-contact4").value,
-		};
-		google.script.run.addTitlePage(tpInfo);
-		$("#title-page-button").removeClass("blue").addClass("red");
-		$("#format").removeClass("blue").addClass("red");
-		$("#title-page-button").html("Remove Title Page");
-		$("#format").text("Remove Title Page");
-	}
-
-	titlePageActive = !titlePageActive;
-	google.script.run.storeSettings("titlePageActive", titlePageActive);
-});
-
-$("#scene-numbers").click(function () {
-	google.script.run.storeSettings(
-		"sceneNumbers",
-		$("#scene-numbers").is(":checked")
-	);
-});
-$("#format-margins-option").click(function () {
-	google.script.run.storeSettings(
-		"formatMarginsOption",
-		$("#format-margins-option").is(":checked")
-	);
-});
-$("#r-whole").click(function () {
-	google.script.run.storeSettings(
-		"formatRange",
-		"whole"
-	);
-});
-$("#r-selection").click(function () {
-	google.script.run.storeSettings(
-		"formatRange",
-		"selection"
-	);
-});
-
-// Things to run when the addon loads
-$("document").ready(function () {
-	google.script.run.withSuccessHandler(loadSettings).getSettings();
-	google.script.run.withSuccessHandler(changeDOMBasedOnLicense).isLicenseValid();
-	google.script.run.withSuccessHandler(formatComplete).getCharsFromStorage();
-
-	// Add pro animation
-	setInterval(function () {
-		$("#pro-collapsible").addClass("blue-text");
-		setTimeout(function () {
-			$("#pro-collapsible").removeClass("blue-text");
-			setTimeout(function () {
-				$("#pro-collapsible").addClass("blue-text");
-				setTimeout(function () {
-					$("#pro-collapsible").removeClass("blue-text");
-				}, 1000);
-			}, 1000);
-		}, 1000);
-	}, 1000 * 60 * 5);
-});
-
-function loadSettings(settings) {
-	if (settings) {
-		// Scene numbers
-		$("#scene-numbers").prop("checked", settings.sceneNumbers || false);
-        // Format fonts and margins
-        if(settings.hasOwnProperty('formatMarginsOption')){
-           $("#format-margins-option").prop("checked", settings.formatMarginsOption);
-        } else {
-           $("#format-margins-option").prop("checked", true);
-        }
-        // Format Range
-        if(settings.hasOwnProperty('formatRange')){
-           if(settings.formatRange == "whole"){
-              $("#r-whole").prop("checked", true);
-           } else {
-              $("#r-selection").prop("checked", true);
-           }
-        } else {
-           $("#r-whole").prop("checked", true);
-        }
-
-		// Title page and format buttons
-		titlePageActive = settings.titlePageActive || false;
-		var tpInfo = settings.tpInfo;
-		if (tpInfo) {
-			$("#tp-title").val(tpInfo.title);
-			$("#tp-subtitle").val(tpInfo.subtitle);
-			$("#tp-author").val(tpInfo.author);
-			$("#tp-contact1").val(tpInfo.contact1);
-			$("#tp-contact2").val(tpInfo.contact2);
-			$("#tp-contact3").val(tpInfo.contact3);
-			$("#tp-contact4").val(tpInfo.contact4);
-		}
-		if (titlePageActive) {
-			$("#title-page-button").removeClass("blue").addClass("red");
-			$("#format").removeClass("blue").addClass("red");
-			$("#title-page-button").text("Remove Title Page");
-			$("#format").text("Remove Title Page");
-		}
-	}
-}
-
-function changeDOMBasedOnLicense(licenseResult) {
-	licenseValid = licenseResult;
-	// Update the interface depending on whether it's a free or pro user
-	if (licenseValid) {
-		// Ensure characters are all enabled
-		$(".char-group").each(function (index) {
-			$(this).removeClass("disabled");
-            // TODO: REMOVE "UPGRADE TO PRO FOR MORE"
-		});
-        document.querySelector("#free-pro-content").style.display = "none";
-        document.querySelector("#pro-pro-content").style.display = "block";
-        document.querySelector("#pro-tab-text").innerHTML = "Your pro license";
-        
-	} else {
-		// Disable characters 6-15
-		$(".char-group").each(function (index) {
-			const id = $(this).attr("id");
-			if (Number(id.substr(4, id.length - 4)) > 5) {
-				document.querySelector("#" + id + " .charLong").value =
-					"Upgrade for more";
-				$(this).addClass("disabled");
-			}
-		});
-
-		// Title page button disable, change text
-		$("#title-page-button")
-			.text("Add Title Page (Pro)")
-			.addClass("disabled");
-        document.querySelector("#free-pro-content").style.display = "block";
-        document.querySelector("#pro-pro-content").style.display = "none";
-	}
-}
-
-function alertLicenseStatus(data) {
-if(data.success === true){
-console.log(data.purchase);
-if(data.purchase.permalink == "fountainize-sub"){
-alert("Thanks! Subscription license activated. Refresh your document to apply.");
-} else if(data.purchase.permalink == "fountainize-lifetime"){
-alert("Thanks! Lifetime license activated. Refresh your document to apply.");
-}
-} else {
-alert("Sorry! We didn't recognize that license key. Check to make sure it's correct then contact cathcart.brandon@gmail.com for support.");
-}
-}
-
-function removeLicenseAlert(){
-alert("License successfully removed!");
-}
-
-    
-</script>
-
-<script>
-// Google Payments scripts
-
-//    $('document').ready(function(){
-//        var charStr = google.script.run.getChars();
-//        console.log(charStr);
-//        if(charStr){
-//            chars = JSON.parse(charStr);
-//        for(var i = 1; i < 3; i++){
-//            var j = 0;
-//            $('#char' + i).children('input').each(function () {
-//                this.value = chars[i - 1][j];
-//                j++;
-//            });
-//        }
-//        }
-//        google.payments.inapp.getSkuDetails({
-//          'parameters': {'env': 'prod'},
-//          'success': onSkuDetails,
-//          'failure': onSkuDetailsFail
-//        });
-//    });
-//    
-//    function onSkuDetails(skus){
-//      var products = skus.response.details.inAppProducts;
-//      var count = products.length;
-//      for (var i = 0; i < count; i++) {
-//        alert(products[i].sku);
-//      }
-//    }
-//    
-//    function onSkuDetailsFail(skus){
-//    alert(JSON.stringify(skus));
-//    }
-
-
+  // init
+  run.withSuccessHandler(loadSettings).getSettings();
+  run.withSuccessHandler(changeDOMBasedOnLicense).isLicenseValid();
+  run.withSuccessHandler(fillCharGrid).getCharsFromStorage();
+})();
 </script>

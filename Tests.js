@@ -18,15 +18,14 @@
 var PT = 72; // points per inch
 
 // ---- expected indents (inches -> points), per Style in Fountainize.js ----
-var IND = { scene: 0, action: 0, transition: 0, character: 2 * PT, dialogue: 1 * PT, paranthetical: 1.5 * PT };
+var IND = { scene: 0, action: 0, transition: 0, character: 2 * PT, dialogue: 1 * PT, parenthetical: 1.5 * PT };
 
 // Read the actual rendered properties of a paragraph and infer its element type.
 function readEl(p) {
-  var ind = p.getIndentStart();
-  ind = (ind === null || ind === undefined) ? 0 : ind;
+  var ind = p.getIndentStart(); ind = (ind == null) ? 0 : ind;
+  var sa = p.getSpacingAfter(); sa = (sa == null) ? 0 : sa;
   var align = p.getAlignment();
-  var heading = p.getHeading();
-  var isH3 = heading === DocumentApp.ParagraphHeading.HEADING3;
+  var isH3 = p.getHeading() === DocumentApp.ParagraphHeading.HEADING3;
   var bold = null, font = null;
   try { bold = p.editAsText().isBold(); font = p.editAsText().getFontFamily(); } catch (e) {}
   var near = function (a, b) { return Math.abs(a - b) <= 3; };
@@ -35,10 +34,10 @@ function readEl(p) {
   else if (align === DocumentApp.HorizontalAlignment.RIGHT) type = 'transition';
   else if (align === DocumentApp.HorizontalAlignment.CENTER) type = 'centered';
   else if (near(ind, IND.character)) type = 'character';
-  else if (near(ind, IND.paranthetical)) type = 'paranthetical';
+  else if (near(ind, IND.parenthetical)) type = 'parenthetical';
   else if (near(ind, IND.dialogue)) type = 'dialogue';
   else type = 'action';
-  return { text: p.getText(), type: type, indent: ind, bold: bold, font: font, isH3: isH3, align: align };
+  return { text: p.getText(), type: type, indent: ind, spaceAfter: sa, bold: bold, font: font, isH3: isH3, align: align };
 }
 
 function isBlankPara(p) { var t = p.getText(); return !t || t.trim() === ''; }
@@ -92,7 +91,7 @@ var TESTS = [
     extra: function (e) { return e[0].text === 'EXT/INT. CAR - DAY' ? '' : 'prefix not preserved: ' + e[0].text; } },
   { name: 'Action', input: ['The storm rolls in over the hills.'], expect: ['action'] },
   { name: 'Character + Dialogue', input: ['JANE', 'I told you not to come.'], expect: ['character', 'dialogue'] },
-  { name: 'Parenthetical', input: ['JANE', '(whispering)', 'They can hear us.'], expect: ['character', 'paranthetical', 'dialogue'] },
+  { name: 'Parenthetical', input: ['JANE', '(whispering)', 'They can hear us.'], expect: ['character', 'parenthetical', 'dialogue'] },
   { name: 'Transition (right-aligned)', input: ['He slams the door.', 'CUT TO:', 'INT. HALL - DAY'], expect: ['action', 'transition', 'scene'],
     extra: function (e) { return e[1].align === DocumentApp.HorizontalAlignment.RIGHT ? '' : 'transition not right-aligned'; } },
   { name: 'Centered text >..< (brackets stripped, centered)', input: ['>THE END<'], expect: ['centered'],
@@ -107,43 +106,56 @@ var TESTS = [
     extra: function (e) { return (e[0].text.indexOf('1') === 0 && e[0].text.indexOf('INT. ROOM - DAY') > -1) ? '' : 'no scene number prefix: ' + e[0].text; } },
 ];
 
-// ---------- spacing + idempotency (checked separately) ----------
+// ---------- spacing + idempotency + selection (checked separately) ----------
+// Spacing is paragraph "space after" MARGINS (points), not blank lines: a full gap
+// (BASE_GAP) after blocks, a half gap after dialogue/parenthetical, and zero blank paragraphs.
 function checkSpacing(doc) {
-  var lines = ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.'];
-  var res = runOn(doc, lines);
-  // gaps between consecutive non-blank paragraphs
-  var gaps = [], run = 0, seen = false, prev;
-  res.all.forEach(function (p) {
-    var blank = !p.text || p.text.trim() === '';
-    if (blank) { run++; return; }
-    if (seen) gaps.push({ before: p.text.slice(0, 18), gap: run });
-    seen = true; run = 0;
-  });
-  // expect: 1 before action (after scene), 1 before character, 0 before dialogue, 1 before action
-  var want = [1, 1, 0, 1];
-  var got = gaps.map(function (g) { return g.gap; });
-  return { ok: arrEq(got, want), want: want, got: got, gaps: gaps };
+  var res = runOn(doc, ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.']);
+  var blanks = res.all.filter(function (p) { return !p.text || p.text.trim() === ''; }).length;
+  var got = res.els.map(function (e) { return e.spaceAfter; });
+  var want = [BASE_GAP, BASE_GAP, BASE_GAP, BASE_GAP / 2, BASE_GAP]; // scene, action, character, dialogue, action
+  return { ok: blanks === 0 && arrEq(got, want), blanks: blanks, want: want, got: got };
 }
 
-// A full fingerprint of the document: one entry per paragraph (BLANKS INCLUDED)
-// with its type and text. A second formatting pass must not change this, so any
-// extra blank line, extra space, or doubled header makes it differ.
+// Full fingerprint: one entry per paragraph with type, space-after and text. A
+// second Format Script pass must not change this (no extra lines/spaces/headers).
 function structure(doc) {
   return doc.getBody().getParagraphs().map(function (p) {
-    var blank = isBlankPara(p);
-    return (blank ? 'blank' : readEl(p).type) + '|' + (blank ? '' : p.getText());
+    if (isBlankPara(p)) { return 'blank'; }
+    var r = readEl(p);
+    return r.type + '|sa=' + r.spaceAfter + '|' + p.getText();
   }).join('\n');
 }
 
 function checkIdempotent(doc) {
   var lines = ['INT. ROOM - DAY', 'He waits.', 'JANE', 'Sit.', 'She sits down.', 'CUT TO:', 'EXT. STREET - DAY', 'A car passes by.'];
   runOn(doc, lines);
-  var s1 = structure(doc); // full document after the first format
-  // Re-run convert on the ALREADY-formatted doc (no rebuild) - it must be a no-op.
+  var s1 = structure(doc);
   activeDocOverride = doc;
-  try { convert('whole', false, true, true); } finally { activeDocOverride = null; }
-  var s2 = structure(doc); // full document after the second format
+  try { convert('whole', false, true, true); } finally { activeDocOverride = null; } // re-run must be a no-op
+  var s2 = structure(doc);
   return { ok: s1 === s2, first: s1, second: s2 };
+}
+
+// formatSelection() formats only the selected paragraphs and leaves the rest alone.
+function checkSelection(doc) {
+  var body = doc.getBody();
+  buildDoc(body, ['Untouched action above.', 'JANE', 'Hello there.', 'Untouched line below.']);
+  var paras = body.getParagraphs();
+  doc.setSelection(doc.newRange().addElement(paras[1]).addElement(paras[2]).build()); // select JANE + dialogue
+  activeDocOverride = doc;
+  try { formatSelection(false, false, true); } finally { activeDocOverride = null; }
+
+  var jane, dlg, below;
+  body.getParagraphs().forEach(function (p) {
+    var t = p.getText();
+    if (t === 'JANE') jane = readEl(p);
+    else if (t.indexOf('Hello there') === 0) dlg = readEl(p);
+    else if (t.indexOf('Untouched line below') === 0) below = readEl(p);
+  });
+  var ok = jane && jane.type === 'character' && dlg && dlg.type === 'dialogue'
+        && below && below.spaceAfter === 0; // out-of-selection paragraph left untouched (no margin applied)
+  return { ok: !!ok, jane: jane && jane.type, dlg: dlg && dlg.type, belowSpaceAfter: below && below.spaceAfter };
 }
 
 // ---------- Fountain features NOT implemented (flagged, not failed) ----------
@@ -215,15 +227,21 @@ function runFountainTests() {
   try {
     var sp = checkSpacing(doc);
     (sp.ok ? pass++ : fail++);
-    lines.push((sp.ok ? 'PASS  ' : 'FAIL  ') + 'Spacing: 1 blank between blocks, 0 within  (want ' + JSON.stringify(sp.want) + ', got ' + JSON.stringify(sp.got) + ')');
+    lines.push((sp.ok ? 'PASS  ' : 'FAIL  ') + 'Spacing: space-after margins, no blank lines  (want ' + JSON.stringify(sp.want) + ', got ' + JSON.stringify(sp.got) + ', blanks ' + sp.blanks + ')');
   } catch (err) { fail++; lines.push('FAIL  Spacing — EXCEPTION: ' + err); }
 
   try {
     var idem = checkIdempotent(doc);
     (idem.ok ? pass++ : fail++);
-    lines.push((idem.ok ? 'PASS  ' : 'FAIL  ') + 'Idempotent: re-running gives the same result');
+    lines.push((idem.ok ? 'PASS  ' : 'FAIL  ') + 'Idempotent: a second Format Script pass changes nothing');
     if (!idem.ok) { lines.push('        first:  ' + JSON.stringify(idem.first)); lines.push('        second: ' + JSON.stringify(idem.second)); }
   } catch (err) { fail++; lines.push('FAIL  Idempotent — EXCEPTION: ' + err); }
+
+  try {
+    var sel = checkSelection(doc);
+    (sel.ok ? pass++ : fail++);
+    lines.push((sel.ok ? 'PASS  ' : 'FAIL  ') + 'Format selection: styles only the selection  (jane=' + sel.jane + ', dlg=' + sel.dlg + ', belowSpaceAfter=' + sel.belowSpaceAfter + ')');
+  } catch (err) { fail++; lines.push('FAIL  Format selection — EXCEPTION: ' + err); }
 
   lines.push('');
   lines.push('== NOT IMPLEMENTED (Fountain spec) — flagged, showing what Fountainize currently does ==');

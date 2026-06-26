@@ -1,74 +1,40 @@
-// ON OPEN
-// Adds options to the Add-on menu
-function onOpen(e) {
-  var ui = DocumentApp.getUi();
-  //  ui.createMenu('Fountainize')
-  //  .addItem('Show sidebar', 'showSidebar')
-  //  .addItem('Convert markup', 'convert')
-  //  .addItem('Set fonts, margins', 'docSetUp')
-  //  .addToUi();
-  try{
-    ui.createAddonMenu()
-    .addItem('Show sidebar', 'showSidebar')
-    .addItem('Format Script', 'convert')
-    .addToUi();
-  } catch(e){
-    DocumentApp.getUi().alert(
-      "Issue creating menu",
-      "Google prevented us from starting because we don't have the right permisisons. Please re-install and allow all permissions. Thanks!",
+// Add-on lifecycle: menu, install, sidebar, and the "what's new" notice.
+
+function onOpen(e){
+  try {
+    DocumentApp.getUi().createAddonMenu()
+      .addItem('Show sidebar', 'showSidebar')
+      .addItem('Format Script', 'convert')
+      .addToUi();
+  } catch(err){
+    DocumentApp.getUi().alert("Issue creating menu",
+      "Google prevented us from starting because we don't have the right permissions. Please re-install and allow all permissions. Thanks!",
       DocumentApp.getUi().ButtonSet.OK);
   }
-  
-  // Set version to storage (to test if there's been an update)
-  const updateTitle = "Fountainize update!"
-  let documentProperties;
-  try{
-    documentProperties = PropertiesService.getDocumentProperties();
-  } catch(e){
-    return;
-  }
-  
-  try{
-    const pVersion = documentProperties.getProperty('version');
-    if(pVersion != version){
-      DocumentApp.getUi().alert(
-        updateTitle,
-        "Here's what's new in version " + version + "\n" + changelog[10],
+
+  // Show the changelog once per version bump.
+  try {
+    var props = PropertiesService.getDocumentProperties();
+    if(props && props.getProperty('version') != version){
+      DocumentApp.getUi().alert("Fountainize update!",
+        "Here's what's new in version " + version + "\n" + changelog[version],
         DocumentApp.getUi().ButtonSet.OK);
+      props.setProperty('version', version);
     }
-  } catch(e){
-    DocumentApp.getUi().alert(
-      updateTitle,
-      changelog[10],
-      DocumentApp.getUi().ButtonSet.OK);
-  }
-  
-  documentProperties.setProperty('version', version);
-  monthlyLicenseExpiryCheck();
+  } catch(err){}
 }
 
-function onInstall(e) {
+function onInstall(e){
   onOpen(e);
 }
 
-// SHOW SIDEBAR
-// Show a 300px sidebar
-function showSidebar() {
-  const title = isLicenseValid() !== false ? "Fountainize Pro" : "Fountainize (Free)";
-  var html = HtmlService.createTemplateFromFile("FountainizeSidebar")
-  .evaluate()
-  .setTitle(title) // The title shows in the sidebar
-  try{
-    DocumentApp.getUi().showSidebar(html);
-  } catch(e){
-    Logger.log(e);
-  }
+// Show the 300px sidebar (title reflects license tier).
+function showSidebar(){
+  var title = isLicenseValid() !== false ? "Fountainize Pro" : "Fountainize (Free)";
+  var html = HtmlService.createTemplateFromFile("FountainizeSidebar").evaluate().setTitle(title);
+  try { DocumentApp.getUi().showSidebar(html); } catch(e){}
 }
 
-const changelog = {
-  10: "Added \n" +
-  "- in:/out: now format as transitions \n" +
-  "Fixed \n" +
-  "- Issues with elAbove \n" +
-  "- Dialogue in all caps works just fine now \n"
-}
+var changelog = {
+  10: "Added\n- in:/out: now format as transitions\nFixed\n- Issues with elAbove\n- Dialogue in all caps works just fine now\n"
+};
